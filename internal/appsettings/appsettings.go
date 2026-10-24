@@ -189,22 +189,31 @@ const (
 	QuietPlus     ModeType = 4
 )
 
-// GetPowerMode 读当前电源模式(非法值回退 Entertainment,与原版一致)。
-func (s *Store) GetPowerMode() ModeType {
-	m := ModeType(s.ReadU8(AddrPowerMode))
+// normalizePowerMode 非法模式值回退 Entertainment(与原版一致)。
+func normalizePowerMode(v int) ModeType {
+	m := ModeType(v)
 	if m < Quiet || m > QuietPlus {
 		return Entertainment
 	}
 	return m
 }
 
+// GetPowerMode 读当前电源模式(非法值回退 Entertainment)。
+func (s *Store) GetPowerMode() ModeType {
+	return normalizePowerMode(s.ReadU8(AddrPowerMode))
+}
+
 // SetPowerModeOnly 仅写模式字节(完整切换在 powermode 包)。
 func (s *Store) SetPowerModeOnly(m ModeType) error { return s.WriteU8(AddrPowerMode, byte(m)) }
 
-// GetClevoID 读机型 ID(两字节交换后 Int16)。
-func (s *Store) GetClevoID() int {
-	b := s.Read(AddrClevoID, 2)
+// clevoID 机型 ID 解码(两字节交换后 Int16)。
+func clevoID(b []byte) int {
 	return int(int16(uint16(b[1]) | uint16(b[0])<<8))
+}
+
+// GetClevoID 读机型 ID。
+func (s *Store) GetClevoID() int {
+	return clevoID(s.Read(AddrClevoID, 2))
 }
 
 // GetCustomerID 读定制厂商 ID(WMI17[2],通常由上层缓存)。

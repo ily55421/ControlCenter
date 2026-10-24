@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"controlcenter/internal/appsettings"
@@ -34,6 +36,8 @@ func main() {
 	fc := fan.Default
 	gpuStore := gpu.New(as, w)
 	pm := powermode.New(w, as, fc, gpuStore)
+	exe, _ := os.Executable()
+	pm.ControlGPUPath = gpu.FindControlGPU(filepath.Dir(exe))
 
 	// 启动序列(对应 App_Startup):
 	// 版本写入 AppSettings(0,4..7)
@@ -47,6 +51,10 @@ func main() {
 	ui.SetEventWriter(eventbus.WriteOut)
 
 	srv := ui.New(w, as, kb, fc, pm)
+	// GPU OC 应用通道:探测 ControlGPU.exe(与 ccfnkey 同约定)
+	if pm.ControlGPUPath != "" {
+		srv.GPUOCBase = filepath.Dir(pm.ControlGPUPath)
+	}
 	// 固定端口 8765 优先(与启动器/托盘约定一致),被占用则回退随机端口
 	addr := ""
 	if port, err := srv.ServeOn(8765); err == nil {

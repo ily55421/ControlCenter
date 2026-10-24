@@ -81,17 +81,7 @@ func waitLogs() {
 	}
 }
 
-func findControlGPU(dir string) string {
-	for _, p := range []string{
-		filepath.Join(dir, "ControlGPU.exe"),
-		`C:\Program Files (x86)\ControlCenter\DCHU\ControlGPU.exe`,
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
+func findControlGPU(dir string) string { return gpu.FindControlGPU(dir) }
 
 func initialMode(pm *powermode.Engine, as *appsettings.Store) {
 	if !acpibridgeAvailable() {

@@ -106,6 +106,7 @@ const PAGES=[
  {id:"pref",t:"偏好设置",ico:"⚙"},
  {id:"fan",t:"风扇控制",ico:"🌀"},
  {id:"kb",t:"键盘灯",ico:"⌨"},
+ {id:"flexikey",t:"Flexikey",ico:"🔘"},
  {id:"cpu",t:"CPU 超频",ico:"🧠"},
  {id:"gpu",t:"GPU 超频",ico:"🎯"},
  {id:"bat",t:"电池",ico:"🔋"},
@@ -127,6 +128,7 @@ async function loadHome(){
   ["mode","⚡","电源模式","情境模式切换/涡轮风扇/DTT",s.powerMode],
   ["fan","🌀","风扇转速控制","风扇模式/曲线/防尘",s.fan],
   ["kb","⌨","键盘灯设置","RGB/亮度/灯效",st.kbType>0],
+  ["flexikey","🔘","Flexikey 宏键","宏键配置/过滤驱动开关",s.flexikey],
   ["cpu","🧠","CPU 超频","PL1/PL2/倍频/电压",s.cpuoc],
   ["gpu","🎯","GPU 超频","核心/显存偏移",s.gpuoc],
   ["bat","🔋","电池工具","健康诊断/校准",s.battery],
@@ -160,6 +162,7 @@ async function loadMode(){
   list.push([1,"🔋","节能",ver]);
   list.push([2,"🚀","性能",ver]);
   list.push([3,"🎮","娱乐",ver]);
+  if(s.quietPlus||st.mode===4)list.push([4,"🌌","安静增强",ver]);
   modes.push(...list);
  }
  $("#page-mode").innerHTML=`
@@ -496,7 +499,7 @@ async function loadEnergy(){
   <div class="card"><h3>实时功耗</h3>
    <canvas id="wattcv" width="560" height="180"></canvas>
    <div class="row"><span class="num" id="wattnow" style="font-size:22px;font-weight:700">-- W</span>
-    <span style="color:var(--dim)">设计电池 ${"—"} Wh · 适配器上限 ${"—"} W</span></div>
+    <span style="color:var(--dim)" id="energy-meta">电池 — Wh · 适配器 — W</span></div>
   </div>
   <div class="card"><h3>充放电阈值</h3>
    <div class="row"><label>充电上限 %</label>
@@ -522,7 +525,9 @@ async function loadEnergy(){
  const tick=async()=>{try{const s=await api("energy/sample");wattData.push(s.watt);
   if(wattData.length>60)wattData.shift();
   $("#wattnow").textContent=s.watt.toFixed(1)+" W";
-  drawWatt();if(wattTimer===null){}}catch(e){}};
+  const meta=$("#energy-meta");
+  if(meta)meta.textContent=`电池 ${s.batWh?s.batWh.toFixed(1):"—"} Wh · 适配器/PD ${s.pdWatt?s.pdWatt.toFixed(0):"—"} W`;
+  drawWatt();}catch(e){}};
  tick();wattTimer=setInterval(tick,1000);
 }
 let wattTimer=null;
@@ -549,8 +554,39 @@ async function energyDisable(){await api("energy/apply",{Name:"off",ChargeLimit:
  Everyday:true,Weekdays:[true,true,true,true,true,true,true]});toast("已停用(阈值 100/95)")}
 window.energyApply=energyApply;window.energyDisable=energyDisable;
 
+/* ---------- Flexikey 宏键 ---------- */
+async function loadFlexikey(){
+ const f=await api("flexikey/state");
+ $("#page-flexikey").innerHTML=`
+ <div class="grid g2">
+  <div class="card"><h3>配置文件(C:\\ComboKey\\profile.xml)</h3>
+   ${f.profiles.length?f.profiles.map(p=>`
+    <div class="row"><label style="min-width:0">
+      <input type="radio" name="fkprof" value="${p.name}" ${p.selected?"checked":""}
+        onchange="fkSelect('${p.name}')"> <b>${p.name}</b></label>
+     <span class="badge ${p.selected?"ok":""}">${p.selected?"已选中":"未选"}</span>
+     <span class="hint">KB:${p.kb?"开":"关"} 鼠标:${p.mouse?"开":"关"} · 槽位 ${p.slots}</span></div>`).join("")
+    :`<p class="hint">暂无配置</p>`}
+   <p class="hint">文件${f.exists?"已存在":"不存在(保存后创建)"};宏键明细编辑请直接修改 profile.xml(与原版 CC.exe 格式兼容)。</p>
+  </div>
+  <div class="card"><h3>过滤驱动状态</h3><div class="kv">
+    <b>键盘过滤</b><span>${f.kbEnabled?"已启用":"未启用"}</span>
+    <b>鼠标过滤</b><span>${f.mouseEnabled?"已启用":"未启用"}</span>
+   </div>
+   <div class="row" style="margin-top:12px">
+    <button class="act primary" onclick="fkApply()">应用选中配置</button>
+    <button class="act" onclick="fkDisable()">停用全部宏键</button></div>
+   <p class="hint">应用 = HKFltr kb.dll 全量重注册(清空→开关→注册),并广播 clevofnkey^205。</p>
+  </div>
+ </div>`;
+}
+async function fkSelect(name){try{await api("flexikey/apply",{action:"select",name});toast("已选中 "+name)}catch(e){toast(e.message)}}
+async function fkApply(){try{await api("flexikey/apply",{action:"apply"});toast("宏键配置已应用");loadFlexikey()}catch(e){toast("应用失败:"+e.message)}}
+async function fkDisable(){try{await api("flexikey/apply",{action:"disable"});toast("已停用宏键");loadFlexikey()}catch(e){toast(e.message)}}
+window.fkSelect=fkSelect;window.fkApply=fkApply;window.fkDisable=fkDisable;
+
 /* ---------- 启动 ---------- */
-const PAGE_INIT={home:loadHome,mode:loadMode,pref:loadPref,fan:loadFan,kb:loadCPU?loadKB:loadKB,
+const PAGE_INIT={home:loadHome,mode:loadMode,pref:loadPref,fan:loadFan,kb:loadKB,flexikey:loadFlexikey,
  cpu:loadCPU,gpu:loadGPU,bat:loadBat,energy:loadEnergy};
 PAGES.forEach(p=>{const d=document.createElement("div");d.className="page";d.id="page-"+p.id;
  $("#main").appendChild(d)});

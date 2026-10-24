@@ -4,7 +4,6 @@ package hotkeys
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"controlcenter/internal/appsettings"
 	"controlcenter/internal/eventbus"
@@ -47,11 +46,8 @@ func (d *Dispatcher) Dispatch(value uint64) {
 		d.kbUp()
 	case 37: // FnLock 开关
 		d.toggleFnLock()
-	case 38: // 麦克风静音
-		// CoreAudio 简化:留待 UI 层;写状态标志
-		cur := d.as.ReadU8(appsettings.AddrCallMute)
-		d.as.WriteU8(appsettings.AddrCallMute, byte(1-cur))
-		d.showOSD(fmt.Sprintf("MICROPHONE %s", onOff(cur == 0)))
+	case 38: // 麦克风静音(CoreAudio 真实静音)
+		d.toggleMicMute()
 	case 47: // 电池温度
 		d.checkBatteryTemp()
 	case 48, 49, 50, 51, 52, 53, 54, 55, 56, 78, 79: // 亮度档
@@ -300,11 +296,14 @@ func (d *Dispatcher) toggleFlexikey() {
 }
 
 func (d *Dispatcher) toggleAirplane() {
-	state := d.w.GetH2RAM(0) // 简化:翻转经 WMI
-	_ = state
-	_ = d.w.SetAirplaneLED(1)
-	_ = d.w.SetWMIValue(19, 1)
-	d.osd.Show("AIRPLANE MODE ON", 0, 0)
+	// 与原版 Insyde_AirplaneMode_Control 一致:读 SystemRadioState(1=飞行开)后翻转,
+	// 同步飞行灯(WMI 121/26),OSD 显示目标状态。
+	next := 1 - win32.SystemRadioState()
+	_ = d.w.SetAirplaneLED(next)
+	if err := win32.SetSystemRadioState(next); err != nil {
+		log.Printf("hotkeys: 写飞行模式状态失败(需管理员权限): %v", err)
+	}
+	d.osd.Show("AIRPLANE MODE "+onOff(next == 1), 0, 0)
 }
 
 func (d *Dispatcher) toggleCC() {
@@ -356,8 +355,27 @@ func (d *Dispatcher) checkBatteryTemp() {
 }
 
 func (d *Dispatcher) lidAction() {
-	// 简化:默认待机(Modern Standby / S3)
-	_ = win32.SuspendState(false)
+	// 对应原版 case 192:按当前电源计划的合盖动作执行(AC/DC 分别取)
+	action := win32.LidActionSleep
+	if ac, dc, err := win32.GetLidCloseAction(); err == nil {
+		if win32.ACOnline() {
+			action = ac
+		} else {
+			action = dc
+		}
+	} else {
+		log.Printf("hotkeys: 读合盖动作失败: %v(默认待机)", err)
+	}
+	switch action {
+	case win32.LidActionNothing:
+		// 不采取任何操作
+	case win32.LidActionHibernate:
+		_ = win32.SuspendState(true)
+	case win32.LidActionShutdown:
+		_ = win32.SuspendState(true) // 安全策略:关机档以休眠替代
+	default: // LidActionSleep(含 Modern Standby)
+		_ = win32.SuspendState(false)
+	}
 }
 
 func (d *Dispatcher) lockOSD(event int) {
@@ -379,7 +397,6 @@ func (d *Dispatcher) lockOSD(event int) {
 	d.osd.Show(text, 0, 0)
 }
 
-var _ = strings.ToLower
 
 func (d *Dispatcher) whiteKBCycle() {
 	cur := d.w.GetWhiteKB()
@@ -391,4 +408,19 @@ func (d *Dispatcher) whiteKBCycle() {
 	d.osd.Show(fmt.Sprintf("KEYBOARD BACKLIGHT %d", next), next, 4)
 	_ = eventbus.WriteOut("clevofnkey^201")
 	_ = eventbus.WriteOut("clevofnkey^201")
+}
+
+// toggleMicMute 真实麦克风静音(CoreAudio,对应原版 DgMic.SetMicStateTo)。
+func (d *Dispatcher) toggleMicMute() {
+	muted, err := win32.ToggleMicMute()
+	if err != nil {
+		log.Printf("hotkeys: CoreAudio 静音失败: %v(回退标志翻转)", err)
+		muted = d.as.ReadU8(appsettings.AddrCallMute) == 0
+	}
+	flag := 0
+	if muted {
+		flag = 1
+	}
+	_ = d.as.WriteU8(appsettings.AddrCallMute, byte(flag))
+	d.showOSD(fmt.Sprintf("MICROPHONE %s", onOff(muted)))
 }

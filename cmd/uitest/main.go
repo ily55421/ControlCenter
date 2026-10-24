@@ -23,7 +23,7 @@ func main() {
 	if err != nil { panic(err) }
 	fmt.Println("UI:", addr)
 	time.Sleep(300 * time.Millisecond)
-	for _, p := range []string{"", "api/status", "api/mode", "api/fan/live", "api/kb/state", "api/battery", "api/cpu/info", "api/preference", "api/gpu/oc"} {
+	for _, p := range []string{"", "api/status", "api/mode", "api/fan/live", "api/kb/state", "api/battery", "api/cpu/info", "api/preference", "api/gpu/oc", "api/energy/sample", "api/flexikey/state"} {
 		r, err := http.Get(addr + p)
 		if err != nil { fmt.Println("ERR", p, err); continue }
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 300))

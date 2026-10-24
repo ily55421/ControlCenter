@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"controlcenter/internal/appsettings"
 	"controlcenter/internal/flexikey"
 )
 
@@ -16,7 +17,7 @@ func main() {
 	}
 	p := store.Selected()
 	drv := flexikey.NewDriver()
-	ctl := flexikey.NewController(drv, nil)
+	ctl := flexikey.NewController(drv, appsettings.Default)
 	if err := ctl.Apply(p); err != nil {
 		fmt.Fprintln(os.Stderr, "下发驱动失败(请确认 HKFltr 驱动已安装):", err)
 		os.Exit(1)

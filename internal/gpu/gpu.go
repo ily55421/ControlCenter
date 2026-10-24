@@ -4,6 +4,7 @@ package gpu
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -130,4 +131,17 @@ func ControlGPUPath(baseDir string) string {
 		return `C:\Program Files (x86)\ControlCenter\DCHU\ControlGPU.exe`
 	}
 	return filepath.Join(baseDir, "ControlGPU.exe")
+}
+
+// FindControlGPU 在 dir 与原版默认安装目录中查找 ControlGPU.exe;找不到返回空串。
+func FindControlGPU(dir string) string {
+	for _, p := range []string{
+		filepath.Join(dir, "ControlGPU.exe"),
+		`C:\Program Files (x86)\ControlCenter\DCHU\ControlGPU.exe`,
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }

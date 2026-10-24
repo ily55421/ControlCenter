@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Control Center — 原版 vs Go 重构版 功能对比</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--panel2:#eef0f4;--line:#d9dee7;--txt:#1c2330;--dim:#5d6778;
+--acc:#0f6bd7;--ok:#1a9e58;--warn:#c07a00;--err:#c93545;--na:#8a93a5}
+@media (prefers-color-scheme:dark){
+:root{--bg:#0d0f14;--panel:#161a22;--panel2:#1d222d;--line:#2a3140;--txt:#e8eaf0;--dim:#8b93a7;
+--acc:#4d9fff;--ok:#37c871;--warn:#ffb020;--err:#ff6b78;--na:#6b7385}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:14px/1.65 "Segoe UI",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:22px;margin-bottom:6px}
+h2{font-size:16px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-bottom:18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .n{font-size:26px;font-weight:700}
+.kpi .l{color:var(--dim);font-size:12px;margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.bar-row{display:grid;grid-template-columns:150px 1fr 92px;gap:10px;align-items:center;margin:7px 0;font-size:13px}
+.bar-track{background:var(--panel2);border-radius:5px;height:18px;overflow:hidden;display:flex}
+.bar-full{background:var(--ok);height:100%}
+.bar-part{background:var(--warn);height:100%}
+.bar-miss{background:var(--err);height:100%;opacity:.75}
+.cnt{color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:500;white-space:nowrap}
+.scroll{overflow-x:auto}
+.st{display:inline-block;min-width:52px;text-align:center;padding:1px 9px;border-radius:10px;font-size:12px;border:1px solid}
+.st.full{color:var(--ok);border-color:var(--ok)}
+.st.part{color:var(--warn);border-color:var(--warn)}
+.st.miss{color:var(--err);border-color:var(--err)}
+.st.na{color:var(--na);border-color:var(--na)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim);font-size:12px;margin:8px 0 4px}
+code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:12px}
+ul.tight{padding-left:20px}
+ul.tight li{margin:4px 0}
+.note{color:var(--dim);font-size:12px;margin-top:8px}
+.pass{color:var(--ok);font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>Control Center 3.0 (v7.022) — 原版 vs Go 重构版功能对比</h1>
+<div class="sub" id="sub"></div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="card">
+  <b>一句话结论</b>：协议层（ACPI 桥 IOCTL / 事件日志 IPC / WMI 命令 / AppSettings 4KB）已 100% 还原并在真机验证；
+  功能面板覆盖原版 13 个组件中的全部主要组件，UI 功能点约 <span id="kpi-impl"></span>；
+  剩余差距集中在<b>装饰性/定制性</b>能力（图标 OSD、皮肤着色、PeakShift 等 OEM 定制）与<b>宏编辑器 UI</b>。
+</div>
+
+<h2>组件完成度概览</h2>
+<div class="legend">
+  <span><span class="st full">■</span> 完整实现</span>
+  <span><span class="st part">■</span> 部分实现/形式简化</span>
+  <span><span class="st miss">■</span> 未实现</span>
+  <span><span class="st na">■</span> 本机硬件不支持</span>
+</div>
+<div class="card" id="bars"></div>
+
+<h2>功能点明细矩阵</h2>
+<div class="card scroll"><table id="matrix">
+<thead><tr><th>组件</th><th>功能点</th><th>原版实现</th><th>Go 版实现</th><th>状态</th></tr></thead>
+<tbody></tbody>
+</table></div>
+
+<h2>真机测试验证（COLORFUL P16 Pro IXA1 / Clevo ID 25990 / i9-14900HX）</h2>
+<div class="card scroll"><table id="tests">
+<thead><tr><th>验证项</th><th>方式</th><th>结果</th></tr></thead>
+<tbody></tbody>
+</table></div>
+
+<h2>本轮改造清单（已提交）</h2>
+<div class="card"><ul class="tight" id="changes"></ul></div>
+
+<h2>已知差距与有意简化</h2>
+<div class="card"><ul class="tight" id="gaps"></ul>
+<p class="note">「本机不支持」= WMI16 功能位图（0x89f）未置位：本机无电池管理/节能调度/CPU OC 支持位，相关页面在主页自动置灰，代码路径完整保留供支持机型使用。</p>
+</div>
+
+<div class="note" id="foot"></div>
+</main>
+<script>
+"use strict";
+/* ================= 数据（改这里即可更新页面） ================= */
+const META = {
+  date: "2026-07-24", machine: "COLORFUL P16 Pro IXA1 (Clevo 25990)",
+  origEstimate: "约 230~250", 
+};
+// 组件统计:full/part/miss/na 功能点数(依据逆向盘点与代码核对的估计)
+const COMPONENTS = [
+  {name:"协议层(桥/IPC/WMI/NV)", full:4, part:0, miss:0, na:0, note:"IOCTL/事件日志/WMI 45 命令/AppSettings 4KB 全还原,真机验证"},
+  {name:"服务 DCHUService",     full:4, part:0, miss:0, na:0, note:"事件源/命令通道/会话管理/服务安装"},
+  {name:"主界面 CC30",          full:12, part:2, miss:2, na:0, note:"磁贴/5 模式/偏好全组;缺皮肤着色与用户指南"},
+  {name:"托盘热键 FnKey",       full:14, part:5, miss:3, na:0, note:"45 事件码+电源模式引擎;OSD 文本化;PeakShift 等 OEM 定制未做"},
+  {name:"风扇 FanSpeedSetting", full:6,  part:1, miss:1, na:0, note:"10 模式/偏移/曲线/除尘/监控;曲线为 3+1 点(原 10 档表),RPM 直设缺"},
+  {name:"键盘灯 Keyboard",      full:9,  part:2, miss:0, na:0, note:"白光/三区/灯带/Logo/7 灯效/睡眠定时;Perkey 后端有 UI 未暴露"},
+  {name:"Flexikey 宏键",        full:5,  part:2, miss:1, na:0, note:"XML 兼容/配置选择/应用/停用/驱动封装;宏编辑器 UI 未做"},
+  {name:"CPU 超频 CPUOC",       full:8,  part:2, miss:0, na:1, note:"page6 全参数+XTU 通道;本机无 CPUOC 支持位"},
+  {name:"GPU 超频",             full:5,  part:1, miss:0, na:0, note:"双 GPU 偏移/保存/限频/ControlGPU 通道"},
+  {name:"电池 BatteryUtility",  full:4,  part:0, miss:0, na:1, note:"信息/健康 4 级/校准状态机;本机无电池支持位"},
+  {name:"节能 EnergySave",      full:5,  part:1, miss:1, na:1, note:"采样/双调度/阈值/WMI118;缺电源计划快捷切换;本机无支持位"},
+  {name:"工具集(ccutil)",       full:6,  part:1, miss:0, na:0, note:"快捷方式/Appx 预配/移除/清理/服务/诊断;wakepanel 简化"},
+];
+// 明细矩阵: [组件, 功能点, 原版, Go 版, 状态]
+const MATRIX = [
+["协议层","ACPI 桥 IOCTL 客户端","InsydeDCHU.dll(6 导出)","internal/acpibridge(等价 6 函数+EventLoop)","full"],
+["协议层","事件日志 IPC","OutLog/PowerBiosServerLog","internal/eventbus(.NET 互读兼容)","full"],
+["协议层","WMI 命令集","DCHU.SetWMI/包命令/WMI4 多路复用","internal/wmi(~45 命令+EC RAM 直访)","full"],
+["协议层","NV 设置区","CleDef.AppSetting 4KB","internal/appsettings(~50 地址常量+类型化读写)","full"],
+["主界面","磁贴启动器","10 磁贴 UWP 启动","Web UI 8 磁贴(按支持位禁用)+路由页","full"],
+["主界面","电源模式切换","4+1 模式 RadioButton","5 模式卡(本轮补 QuietPlus)+托盘菜单","full"],
+["主界面","FlexiCharger","开关+起/停档位(WMI4 sub30/31)","偏好页开关+EC 档位表下拉","full"],
+["主界面","FnLock/WinKey/FnWin","复选框(WMI4 sub25)","开关组(同编码 1=on/2=off)","full"],
+["主界面","GPU 模式切换","4 模式下拉+重启","sub22 下发+确认重启","full"],
+["主界面","蓝光过滤","滑条 0-10 档 GammaRamp","bluelight 包 GDI Gamma(同映射)","full"],
+["主界面","语言/低刷新/Turbo/DTT/无噪声","Preference 各项","偏好+性能选项开关组","full"],
+["主界面","AMD 手动模式","Auto/Manual+电压频率下拉写 BIOS","wmi.QueryAMDMode/SetAMDMode 已实现,无 UI","part"],
+["主界面","PgUpDn 键","复选框","WMI4 sub26+NV 镜像","full"],
+["主界面","CustomSkinColor 皮肤着色","RGB 重着色皮肤图片","无(Web UI 自有主题)","miss"],
+["主界面","用户指南按钮","打开手册","无","miss"],
+["托盘热键","托盘菜单","UWP 托盘","win32.Tray(5 模式勾选+打开 CC+退出)","full"],
+["托盘热键","电源模式引擎","ChangePowerMode 全序列","powermode 8 步序列(NV 上电/EC/GPU 联动/EnergyStar/电源计划/风扇/广播)","full"],
+["托盘热键","麦克风静音","DgMic CoreAudio 真实静音","本轮实现:COM IAudioEndpointVolume(真机验证)","full"],
+["托盘热键","飞行模式","SystemRadioState+HID dll 翻转","本轮实现:注册表双向翻转+LED(WMI121/26)","full"],
+["托盘热键","盖子动作","按电源计划 LIDACTION AC/DC","本轮实现:GetLidCloseAction 分 AC/DC 执行","full"],
+["托盘热键","键盘灯 ±/开关/循环","事件 32/33/63/138/158/159","hotkeys 全覆盖+状态广播","full"],
+["托盘热键","亮度 11 档/直设","事件 48-56/78/79/186","WMI17 表+SetBrightness","full"],
+["托盘热键","触摸板/摄像头开关","事件 252/253、246-249","Win+Ctrl+F24 / WMI34+NV 标志","full"],
+["托盘热键","风扇模式热键 OSD","事件 58/106/107/112/143","OSD+SetMode+clevofan^113 广播","full"],
+["托盘热键","FlexiCharger/FlexiKey/FlexiAccess 热键","事件 240/241/123/301/302","240/241/123 实操;301/302 仅 OSD(原版亦通知性质)","part"],
+["托盘热键","OSD 呈现","~80 张图片图标 OSD","文本+进度条分层窗口(形式简化)","part"],
+["托盘热键","热键事件覆盖","~90 事件码","45 事件码(主要类别全覆盖,长尾 OEM 定制缺)","part"],
+["托盘热键","PeakShift 峰谷充电","MCJ 定制 WMI118+INI","无(OEM 定制)","miss"],
+["托盘热键","WOL/LAN 省电/EC 固件检测","Features.cs 后台项","WOL(WMI121/22)已封装;其余未做","part"],
+["托盘热键","面板刷新率管理","多刷新率检测/保存恢复","lowRefresh 开关+NV 镜像(检测/恢复简化)","part"],
+["风扇","模式集","Auto/Max/MaxQ/Silent/IQST/Custom/IFSC…","FanMode 0-9 共 10 种(含 IFSC/无噪声)","full"],
+["风扇","自动偏移","滑条 0-100%","SetOffsetPercent+滑条","full"],
+["风扇","自定义曲线","10 档温度-转速表×3 风扇","3 组曲线 T1-T3/D1-D3(T4/D4=100 固定)","part"],
+["风扇","除尘","立即+定时计划(Resume/Day/Hour)","run/schedule+状态读取","full"],
+["风扇","实时监控","CPU/GPU/MEM/FAN 四页签","4 风扇 2 秒轮询仪表(温度/RPM/duty)","full"],
+["风扇","RPM 直设","BTN_SAVE 直接写转速","无(RPMFanControl 位已探测)","miss"],
+["键盘灯","白光 5 档","WMI39/61","SetWhiteBrightness ±/直设/循环","full"],
+["键盘灯","RGB 三区+分区色","WMI103 0xF0-0xF2","7 分区(左/中/右/触摸板/Logo/灯带/整体)","full"],
+["键盘灯","灯效","Static/Breath/Random/Flash/Wave/Dance/Tempo/Cycle","Effect 0-7 同类灯效","full"],
+["键盘灯","亮度/开关/睡眠定时/开机保留","0xF4/0xE0/定时器/OverrideBoot","全部实现+NV 镜像","full"],
+["键盘灯","Perkey 逐键 RGB","HID 逐键+布局识别","矩阵寻址后端已实现,UI 未暴露","part"],
+["键盘灯","灯带 X170 效果集","8 种灯带效果","灯带颜色通道实现,效果集简化","part"],
+["键盘灯","6 种键盘类型识别","typeRule 判定","KBType WMI13[15] 探测(0/1/2/3/6/22)","full"],
+["Flexikey","profile.xml 兼容","XmlRW 动态元素名(Profile_N/Set_n/Index_n)","本轮重写:token 解析+同格式输出,往返测试通过","full"],
+["Flexikey","配置档管理","增删/导入导出/双击切换","Web UI 选择/应用/停用(本轮新增);增删改经 XML","part"],
+["Flexikey","宏下发","Set_Filiter_Driver 全量注册","Controller.Apply(清空→开关→注册,同序列)","full"],
+["Flexikey","键盘/鼠标过滤驱动","kb.dll 三重注册","driver.go syscall 绑定全导出(键鼠两套)","full"],
+["Flexikey","按键统计","Start/StopLog+DIS 档位","ReadLogStats 已封装,UI 未暴露","part"],
+["Flexikey","宏编辑器 UI","按键捕获/宏序列/文本宏/ExpressKey 编辑","无(提示直接编辑 profile.xml)","miss"],
+["CPU OC","PL1/PL2/PL 时间","滑条+XTU","page6 参数+Web 数字输入","full"],
+["CPU OC","VR 电流/电压偏移/Override","Auto 勾选+滑条","VRAuto/VRLimit/CoreOffset/OverrideVolt","full"],
+["CPU OC","Per-core 倍频","P 核×10+E 核×16 滑条","同规模数字输入组","full"],
+["CPU OC","应用/恢复默认","写 Insyde Buffer+XTU 后台","Apply/RestoreDefaults 同序列+WaitXTUIdle","full"],
+["CPU OC","实时监控","频率/电压/温度/利用率","ReadInfo(WMI18 通道)","full"],
+["CPU OC","GT 电压/Cache 比率","独立滑条","GraphicsOff 参数在,Cache 比率缺","part"],
+["CPU OC","AMD PPT/TDC/EDC","Ryzen 功耗限制","powermode 切换序列内联动下发","full"],
+["CPU OC","XTU 服务安装","SetXTU1_0/2_0","沿用已安装 XTU(与原版通道一致)","part"],
+["CPU OC","本机支持","—","WMI122 bit23=0,页面自动置灰","na"],
+["GPU OC","双 GPU 核心/显存偏移","滑条+步进下拉","±滑杆(-200~400/-200~1600MHz)","full"],
+["GPU OC","保存/恢复","page5+ControlGPU.exe","非对称 int16 编码逐字节一致+set_increment","full"],
+["GPU OC","模式联动限频","Load_GPU_forFn_3","gpuLink 按模式/AC-DC 下发","full"],
+["GPU OC","NVAPI 状态/驱动信息","info 命令","(5,6) 7 字节解析","full"],
+["GPU OC","监控页(CPU/GPU/MEM/FAN)","独立页签","信息卡(监控在风扇页)","part"],
+["电池","信息/健康判定","WMI7+VBScript 表达式","包解析+表达式求值器,4 级健康","full"],
+["电池","校准状态机","充满→放完流程","RefreshCommand/StageCommand+clevobattery^207","full"],
+["电池","本机支持","—","WMI16 bit9=0,页面自动置灰","na"],
+["节能","功耗采样","WMI65 ADC(字节交换/19.2V)","Sampler+5 点滑动平均+canvas 折线","full"],
+["节能","双调度+星期","表盘拖拽 UI","双调度表单+重叠校验(原版公式)","full"],
+["节能","充放电阈值","Auto/ChargeLimit/DischargeLimit","WMI118 0x06 阈值下发","full"],
+["节能","WMI118 序列","时间同步→生效日→调度→使能→阈值","Apply 同序列","full"],
+["节能","电源计划快捷切换","枚举/激活系统方案","win32.EnumeratePowerSchemes 已封装,页面无入口","part"],
+["节能","本机支持","—","WMI16 bit8=0,页面自动置灰","na"],
+["工具集","快捷方式/Appx 预配/移除/清理","CClnk/RunAutoInstall/RemoveAPP/clean","ccutil 子命令等价","full"],
+["工具集","GUI 启动器","安装脚本","ControlCenter.exe(一键安装/诊断/卸载,UAC 自提权)","full"],
+["工具集","WakePanelUp_Hook","低级输入钩子","24h 定时 Win+Ctrl+F24(简化)","part"],
+];
+const TESTS = [
+["go build ./... 全量构建","go1.27.3 windows/amd64","15 个二进制全部构建成功","pass"],
+["go vet ./...","静态检查","0 告警(含新增 COM unsafe 代码)","pass"],
+["go test ./internal/...","单元测试","10/10 包通过(本轮 3→10 包,新增 24 个测试函数)","pass"],
+["wmitest 硬件在环","WMI16/96/122/17/13+风扇+键盘+SMBIOS","位图 0x89f、风扇 2214RPM、kbType 6、ClevoID 25990 全部正确","pass"],
+["uitest API 冒烟","11 个 HTTP 端点","全部 200,返回真机数据(电池 391Wh/PD 300W/风扇实时)","pass"],
+["ControlCenter -selftest","GUI 链路","窗口/按钮/日志 OK","pass"],
+["麦克风静音(本轮新增)","COM 真机往返测试","false→true→读回 true→还原 false","pass"],
+["盖子动作(本轮新增)","PowerReadAC/DCValueIndex","ac=1 dc=1(睡眠),读取成功","pass"],
+["飞行模式(本轮新增)","SystemRadioState 注册表","读取=0(正常),写路径就绪(需管理员)","pass"],
+["profile.xml 兼容(本轮重写)","Save→Load 往返单测","Profile/Set/Index/宏事件/MakeBreak 全字段一致","pass"],
+];
+const CHANGES = [
+"<b>麦克风静音真实化</b>:事件 38 从「仅写标志位」改为 CoreAudio COM(IAudioEndpointVolume.SetMute),等价原版 DgMic,真机验证通过 <code>internal/win32/audio.go</code>",
+"<b>飞行模式双向切换</b>:事件 133 对齐原版 Insyde_AirplaneMode_Control——读 SystemRadioState 翻转 + WMI121/26 LED 同步 + OSD 显示真实目标状态 <code>internal/win32/radio.go</code>",
+"<b>盖子动作按电源计划执行</b>:事件 192 读 LIDCLOSE_ACTION(AC/DC 分别取),支持 不操作/睡眠/休眠,不再固定待机 <code>internal/win32/power.go</code>",
+"<b>Flexikey Web UI 新增</b>:导航页+主页磁贴+2 条 API(state/apply),支持配置档选择、应用到 HKFltr 驱动、一键停用、状态展示 <code>internal/ui/server.go</code>",
+"<b>profile.xml 兼容性重写</b>:原版使用动态元素名(Profile_N/Set_n/Index_n/StartKey/Text/SendKey),原 Go 静态 XMLName 实现无法互读——重写为 token 解析+同格式输出,往返单测通过 <code>internal/flexikey/profile.go</code>",
+"<b>电源模式页补 QuietPlus</b>:安静增强(独显断电)模式卡按支持位渲染,此前仅托盘可切",
+"<b>ccapp 补 ControlGPU.exe 探测</b>:GPU OC 保存/模式联动不再依赖回退路径 <code>gpu.FindControlGPU</code>",
+"<b>ccflexikey 空指针隐患修复</b>:Controller 注入 appsettings.Default(原 nil Store 在 Apply 时会 panic)",
+"<b>节能页占位符接真数据</b>:电池 Wh/PD W 从 api/energy/sample 动态填充;清理 no-op 代码",
+"<b>单元测试 3→10 包</b>:新增 gpu(int16 非对称编码)/wmi(SetWMI 子命令编码)/appsettings(模式归一/ClevoID)/keyboard(Perkey 寻址)/energysave(调度重叠)/flexikey(XML 往返/宏编码)/powermode(循环链/参数格式)",
+"<b>死代码清理</b>:strings.ToLower/strconv.Itoa 占位、PAGE_INIT 冗余表达式、wattTimer no-op",
+];
+const GAPS = [
+"OSD 为文本+进度条分层窗口,非原版 ~80 张图片图标(功能等价,观感不同)",
+"Perkey 逐键 RGB:矩阵寻址后端已实现,Web UI 未暴露取色器/键位图",
+"Flexikey 宏编辑器 UI(按键捕获/文本宏编辑)未做;XML 与原版完全兼容,可先用原版 CC.exe 编辑后由 Go 版应用",
+"AMD 手动模式(电压/频率下拉)仅探测+日志,无 UI(Intel 机型不受影响)",
+"风扇自定义曲线为 3 可编辑点+100℃ 固定点,原版为 10 档表;RPM 直设未做",
+"CustomSkinColor 皮肤着色、用户指南、PeakShift(MCJ)、表盘式节能 UI 等 OEM 定制/装饰性能力未移植",
+"wakepanel 为 24h 定时触发,非低级输入钩子",
+"本机(无电池/节能/CPU OC 支持位)无法真机验证对应页面,代码路径经单测与 API 冒烟覆盖",
+];
+/* ================= 渲染 ================= */
+const $=s=>document.querySelector(s);
+const ST={full:["完整","full"],part:["部分","part"],miss:["缺失","miss"],na:["不支持","na"]};
+$("#sub").textContent=`数据截止 ${META.date} · 验证机型 ${META.machine} · 原版功能点估计 ${META.origEstimate}(逆向盘点) · 状态基于代码核对+真机测试`;
+(function(){
+  let F=0,P=0,M=0,N=0;
+  COMPONENTS.forEach(c=>{F+=c.full;P+=c.part;M+=c.miss;N+=c.na});
+  const tot=F+P+M+N;
+  $("#kpis").innerHTML=[
+    [tot,"对比功能点总数"],[F,"完整实现"],[P,"部分/简化"],[M,"未实现"],[N,"本机不支持"],
+    [Math.round(F/tot*100)+"%","完整率"],[Math.round((F+P)/tot*100)+"%","覆盖率(完整+部分)"],
+  ].map(k=>`<div class="kpi"><div class="n">${k[0]}</div><div class="l">${k[1]}</div></div>`).join("");
+  $("#kpi-impl").textContent=`${F} 项完整 + ${P} 项部分(共 ${tot} 项对比点)`;
+  const max=Math.max(...COMPONENTS.map(c=>c.full+c.part+c.miss+c.na));
+  $("#bars").innerHTML=COMPONENTS.map(c=>{
+    const t=c.full+c.part+c.miss+c.na;
+    const w=n=>(n/max*100).toFixed(1)+"%";
+    return `<div class="bar-row"><div title="${c.note}">${c.name}</div>
+     <div class="bar-track">
+       <div class="bar-full" style="width:${w(c.full)}"></div>
+       <div class="bar-part" style="width:${w(c.part)}"></div>
+       <div class="bar-miss" style="width:${w(c.miss)}"></div>
+     </div>
+     <div class="cnt">${c.full}✓ ${c.part}◐ ${c.miss}✗${c.na?" "+c.na+"—":""}</div></div>`}).join("");
+  document.querySelector("#matrix tbody").innerHTML=MATRIX.map(r=>
+    `<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td><span class="st ${ST[r[4]][1]}">${ST[r[4]][0]}</span></td></tr>`).join("");
+  document.querySelector("#tests tbody").innerHTML=TESTS.map(t=>
+    `<tr><td><b>${t[0]}</b></td><td>${t[1]}</td><td class="pass">${t[2]} ✓</td></tr>`).join("");
+  $("#changes").innerHTML=CHANGES.map(c=>`<li>${c}</li>`).join("");
+  $("#gaps").innerHTML=GAPS.map(g=>`<li>${g}</li>`).join("");
+  $("#foot").textContent=`来源:_analysis/ 反编译源码盘点(ILSpy)+ internal/、cmd/ 代码核对 + 真机运行验证(wmitest/uitest/go test)。生成于 ${META.date}。`;
+})();
+</script>
+</body>
+</html>

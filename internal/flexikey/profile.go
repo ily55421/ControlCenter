@@ -1,12 +1,18 @@
-// flexikey — 配置数据模型与 profile.xml 持久化(与原 CC.exe XML 格式兼容)。
+// flexikey — 配置数据模型与 profile.xml 持久化。
+// XML 结构与原版 CC.exe(XmlRW.Save2Xml/LoadXml)逐元素兼容:
+// 动态元素名 Profile_<i> / Set_<n> / Index_<n>,文本宏用 StartKey/Text/SendKey 子元素。
 package flexikey
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // ActionType 动作类型。
@@ -40,28 +46,29 @@ type MacroEvent struct {
 
 // KeyInfo 一个槽位。
 type KeyInfo struct {
-	Device       DeviceType
-	KeyCode      int
-	Name         string
-	Action       ActionType
-	Tip          string
-	AppPath      string
-	AppEventID   int
-	Text         string
-	StartKeys    []MacroEvent
-	SendKeys     []MacroEvent
-	Macro        []MacroEvent
+	Device        DeviceType
+	KeyCode       int
+	Name          string // 原版 UiName
+	Display       string // 原版 Set 级 KeyDisplay
+	Action        ActionType
+	Tip           string
+	AppPath       string
+	AppEventID    int
+	Text          string
+	StartKeys     []MacroEvent
+	SendKeys      []MacroEvent
+	Macro         []MacroEvent
 	KeypressDelay bool
 }
 
 // Profile 一个配置档。
 type Profile struct {
-	Index        int
-	Name         string
-	IsKbEnable   bool
+	Index         int
+	Name          string
+	IsKbEnable    bool
 	IsMouseEnable bool
-	IsSelected   bool
-	Keys         []*KeyInfo
+	IsSelected    bool
+	Keys          []*KeyInfo
 }
 
 // Store 配置存储(profile.xml)。
@@ -73,108 +80,219 @@ type Store struct {
 // DefaultPath C:\ComboKey\profile.xml(与原版一致)。
 func DefaultPath() string { return filepath.Join(`C:\ComboKey`, "profile.xml") }
 
-// Load 读取配置;文件不存在时创建首个 Profile。
+func defaultProfile() *Profile {
+	return &Profile{Index: 0, Name: "Profile0", IsKbEnable: true, IsMouseEnable: true, IsSelected: true}
+}
+
+func atoiSafe(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
+// eventFromAttrs 从 XML 属性集解析一个宏事件。
+func eventFromAttrs(attrs []xml.Attr) MacroEvent {
+	var ev MacroEvent
+	for _, a := range attrs {
+		switch a.Name.Local {
+		case "KeyCode":
+			ev.KeyCode = atoiSafe(a.Value)
+		case "KeysGroup":
+			ev.KeysGroup = atoiSafe(a.Value)
+		case "KeyMakeBreak":
+			ev.MakeBreak = parseMakeBreak(a.Value)
+		case "KeyDelay":
+			ev.Delay = atoiSafe(a.Value)
+		case "KeyDisplay":
+			ev.Display = a.Value
+		}
+	}
+	return ev
+}
+
+// Load 读取配置(原版 XmlRW.LoadXml 兼容);文件不存在时创建首个 Profile。
 func Load(path string) (*Store, error) {
 	s := &Store{path: path}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		p := &Profile{Index: 0, Name: "Profile0", IsKbEnable: true, IsMouseEnable: true, IsSelected: true}
-		s.Profiles = append(s.Profiles, p)
+		s.Profiles = append(s.Profiles, defaultProfile())
 		return s, nil
 	}
-	var doc xmlRoot
-	if err := xml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("flexikey: profile.xml 解析失败: %w", err)
-	}
-	for _, xp := range doc.Profiles {
-		p := &Profile{
-			Index:         xp.Index,
-			Name:          xp.Name,
-			IsKbEnable:    xp.IsKbEnable == 1,
-			IsMouseEnable: xp.IsMouseEnable == 1,
-			IsSelected:    xp.IsSelected == 1,
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	var cur *Profile
+	var curKey *KeyInfo
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
 		}
-		for _, xs := range xp.Sets {
-			k := &KeyInfo{
-				Device:        DeviceType(xs.Device),
-				KeyCode:       xs.KeyCode,
-				Action:        ActionType(xs.Action),
-				Tip:           xs.Tip,
-				AppPath:       xs.AppPath,
-				Text:          xs.Text,
-				KeypressDelay: xs.IsKeypressDelay == 1,
-			}
-			for _, ev := range xs.Macro {
-				k.Macro = append(k.Macro, MacroEvent{KeyCode: ev.KeyCode, KeysGroup: ev.KeysGroup,
-					MakeBreak: parseMakeBreak(ev.MakeBreakText), Delay: ev.Delay, Display: ev.Display})
-			}
-			for _, ev := range xs.StartKeys {
-				k.StartKeys = append(k.StartKeys, MacroEvent{KeyCode: ev.KeyCode, KeysGroup: ev.KeysGroup, MakeBreak: parseMakeBreak(ev.MakeBreakText), Delay: ev.Delay, Display: ev.Display})
-			}
-			for _, ev := range xs.SendKeys {
-				k.SendKeys = append(k.SendKeys, MacroEvent{KeyCode: ev.KeyCode, KeysGroup: ev.KeysGroup, MakeBreak: parseMakeBreak(ev.MakeBreakText), Delay: ev.Delay, Display: ev.Display})
-			}
-			p.Keys = append(p.Keys, k)
+		if err != nil {
+			return nil, fmt.Errorf("flexikey: profile.xml 解析失败: %w", err)
 		}
-		s.Profiles = append(s.Profiles, p)
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			switch {
+			case strings.HasPrefix(name, "Profile_"):
+				p := &Profile{Index: atoiSafe(strings.TrimPrefix(name, "Profile_"))}
+				for _, a := range t.Attr {
+					switch a.Name.Local {
+					case "Name":
+						p.Name = a.Value
+					case "IsSelected":
+						p.IsSelected = atoiSafe(a.Value) == 1
+					case "IsKbEnable":
+						p.IsKbEnable = atoiSafe(a.Value) == 1
+					case "IsMouseEnable":
+						p.IsMouseEnable = atoiSafe(a.Value) == 1
+					}
+				}
+				s.Profiles = append(s.Profiles, p)
+				cur, curKey = p, nil
+			case strings.HasPrefix(name, "Set_") && cur != nil:
+				k := &KeyInfo{}
+				for _, a := range t.Attr {
+					switch a.Name.Local {
+					case "Device":
+						k.Device = DeviceType(atoiSafe(a.Value))
+					case "KeyCode":
+						k.KeyCode = atoiSafe(a.Value)
+					case "UiName":
+						k.Name = a.Value
+					case "Action":
+						k.Action = ActionType(atoiSafe(a.Value))
+					case "IsKeypressDelay":
+						k.KeypressDelay = atoiSafe(a.Value) == 1
+					case "Tip":
+						k.Tip = a.Value
+					case "KeyDisplay":
+						k.Display = a.Value
+					}
+				}
+				cur.Keys = append(cur.Keys, k)
+				curKey = k
+			case strings.HasPrefix(name, "Index_") && curKey != nil:
+				ev := eventFromAttrs(t.Attr)
+				var appPath string
+				var appEvent int
+				hasApp := false
+				for _, a := range t.Attr {
+					switch a.Name.Local {
+					case "AppPath":
+						appPath, hasApp = a.Value, true
+					case "AppEventId":
+						appEvent, hasApp = atoiSafe(a.Value), true
+					}
+				}
+				if hasApp || curKey.Action == ActionLaunch {
+					curKey.AppPath = appPath
+					curKey.AppEventID = appEvent
+				} else {
+					curKey.Macro = append(curKey.Macro, ev)
+				}
+			case name == "StartKey" && curKey != nil:
+				curKey.StartKeys = append(curKey.StartKeys, eventFromAttrs(t.Attr))
+			case name == "SendKey" && curKey != nil:
+				curKey.SendKeys = append(curKey.SendKeys, eventFromAttrs(t.Attr))
+			case name == "Text" && curKey != nil:
+				for _, a := range t.Attr {
+					if a.Name.Local == "TextContent" {
+						curKey.Text = a.Value
+					}
+				}
+			}
+		case xml.EndElement:
+			name := t.Name.Local
+			switch {
+			case strings.HasPrefix(name, "Set_"):
+				curKey = nil
+			case strings.HasPrefix(name, "Profile_"):
+				cur, curKey = nil, nil
+			}
+		}
 	}
 	if len(s.Profiles) == 0 {
-		p := &Profile{Index: 0, Name: "Profile0", IsKbEnable: true, IsMouseEnable: true, IsSelected: true}
-		s.Profiles = append(s.Profiles, p)
+		s.Profiles = append(s.Profiles, defaultProfile())
 	}
 	return s, nil
 }
 
-// Save 保存配置。
+// xmlAttrEsc 属性值转义(& < > " ')。
+func xmlAttrEsc(s string) string {
+	r := strings.NewReplacer(
+		"&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
+}
+
+// writeEventEl 输出一个宏事件元素(name 形如 Index_0 / StartKey / SendKey)。
+func writeEventEl(b *bytes.Buffer, indent, name string, ev MacroEvent, withGroup bool) {
+	if withGroup {
+		fmt.Fprintf(b, "%s<%s KeyCode=\"%d\" KeysGroup=\"%d\" KeyMakeBreak=\"%s\" KeyDelay=\"%d\" KeyDisplay=\"%s\"/>\r\n",
+			indent, name, ev.KeyCode, ev.KeysGroup, makeBreakText(ev.MakeBreak), ev.Delay, xmlAttrEsc(ev.Display))
+		return
+	}
+	fmt.Fprintf(b, "%s<%s KeyCode=\"%d\" KeyMakeBreak=\"%s\" KeyDelay=\"%d\" KeyDisplay=\"%s\"/>\r\n",
+		indent, name, ev.KeyCode, makeBreakText(ev.MakeBreak), ev.Delay, xmlAttrEsc(ev.Display))
+}
+
+// defaultTextKeys 原版行为:文本宏 Start/Send 序列为空时补一对 Make/Break 空事件。
+func defaultTextKeys() []MacroEvent {
+	return []MacroEvent{{MakeBreak: 0}, {MakeBreak: 1}}
+}
+
+// Save 保存配置(与原版 Save2Xml 元素/属性布局一致;None 槽位不落盘但参与编号)。
 func (s *Store) Save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	var doc xmlRoot
 	active := 0
 	for i, p := range s.Profiles {
 		if p.IsSelected {
 			active = i
 		}
-		xp := xmlProfile{
-			Index: p.Index, Name: p.Name,
-			IsKbEnable: b2i(p.IsKbEnable), IsMouseEnable: b2i(p.IsMouseEnable),
-			IsSelected: b2i(p.IsSelected),
-		}
-		for _, k := range p.Keys {
+	}
+	var b bytes.Buffer
+	b.WriteString(xml.Header)
+	fmt.Fprintf(&b, "<root Active=\"%d\">\r\n", active)
+	for i, p := range s.Profiles {
+		fmt.Fprintf(&b, "  <Profile_%d Name=\"%s\" IsSelected=\"%d\" CurrentDevice=\"0\" IsKbEnable=\"%d\" IsMouseEnable=\"%d\" Icon=\"\">\r\n",
+			i, xmlAttrEsc(p.Name), b2i(p.IsSelected), b2i(p.IsKbEnable), b2i(p.IsMouseEnable))
+		for n, k := range p.Keys {
 			if k.Action == ActionNone {
-				continue // 原版:none 槽位不落盘
+				continue // 原版:none 槽位不落盘(Set 编号仍占位)
 			}
-			xs := xmlSet{
-				Device: int(k.Device), KeyCode: k.KeyCode, Action: int(k.Action),
-				Tip: k.Tip, AppPath: k.AppPath, AppEventID: k.AppEventID,
-				Text: k.Text, IsKeypressDelay: b2i(k.KeypressDelay),
+			fmt.Fprintf(&b, "    <Set_%d Device=\"%d\" KeyCode=\"%d\" UiName=\"%s\" KeyDisplay=\"%s\" Action=\"%d\" IsKeypressDelay=\"%d\" Tip=\"%s\" CheckBoxName=\"\">\r\n",
+				n+1, int(k.Device), k.KeyCode, xmlAttrEsc(k.Name), xmlAttrEsc(k.Display),
+				int(k.Action), b2i(k.KeypressDelay), xmlAttrEsc(k.Tip))
+			switch k.Action {
+			case ActionKeypress:
+				for j, ev := range k.Macro {
+					writeEventEl(&b, "      ", fmt.Sprintf("Index_%d", j), ev, true)
+				}
+			case ActionLaunch:
+				fmt.Fprintf(&b, "      <Index_0 AppPath=\"%s\" AppEventId=\"%d\"/>\r\n",
+					xmlAttrEsc(k.AppPath), k.AppEventID)
+			case ActionText:
+				start, send := k.StartKeys, k.SendKeys
+				if len(start) == 0 {
+					start = defaultTextKeys()
+				}
+				if len(send) == 0 {
+					send = defaultTextKeys()
+				}
+				for _, ev := range start {
+					writeEventEl(&b, "      ", "StartKey", ev, false)
+				}
+				fmt.Fprintf(&b, "      <Text TextContent=\"%s\"/>\r\n", xmlAttrEsc(k.Text))
+				for _, ev := range send {
+					writeEventEl(&b, "      ", "SendKey", ev, false)
+				}
 			}
-			for i, ev := range k.Macro {
-				xs.Macro = append(xs.Macro, xmlEvent{
-					Index: i, KeyCode: ev.KeyCode, KeysGroup: ev.KeysGroup,
-					MakeBreakText: makeBreakText(ev.MakeBreak), Delay: ev.Delay, Display: ev.Display,
-				})
-			}
-			for i, ev := range k.StartKeys {
-				xs.StartKeys = append(xs.StartKeys, xmlEvent{Index: i, KeyCode: ev.KeyCode,
-					MakeBreakText: makeBreakText(ev.MakeBreak), Delay: ev.Delay, Display: ev.Display})
-			}
-			for i, ev := range k.SendKeys {
-				xs.SendKeys = append(xs.SendKeys, xmlEvent{Index: i, KeyCode: ev.KeyCode,
-					MakeBreakText: makeBreakText(ev.MakeBreak), Delay: ev.Delay, Display: ev.Display})
-			}
-			xp.Sets = append(xp.Sets, xs)
+			fmt.Fprintf(&b, "    </Set_%d>\r\n", n+1)
 		}
-		doc.Profiles = append(doc.Profiles, xp)
+		fmt.Fprintf(&b, "  </Profile_%d>\r\n", i)
 	}
-	doc.Active = active
-	out, err := xml.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return err
-	}
-	header := []byte(xml.Header + "\r\n")
-	return os.WriteFile(s.path, append(header, out...), 0o644)
+	b.WriteString("</root>\r\n")
+	return os.WriteFile(s.path, b.Bytes(), 0o644)
 }
 
 func makeBreakText(mb int) string {
@@ -226,48 +344,6 @@ func (s *Store) SortedProfileNames() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// XML 结构。
-type xmlRoot struct {
-	XMLName  xml.Name     `xml:"root"`
-	Active   int          `xml:"Active,attr"`
-	Profiles []xmlProfile `xml:"Profile"`
-}
-
-type xmlProfile struct {
-	XMLName       xml.Name `xml:"Profile_0"`
-	Index         int      `xml:"-"`
-	Name          string   `xml:"Name,attr"`
-	IsSelected    int      `xml:"IsSelected,attr"`
-	IsKbEnable    int      `xml:"IsKbEnable,attr"`
-	IsMouseEnable int      `xml:"IsMouseEnable,attr"`
-	Sets          []xmlSet `xml:",any"`
-}
-
-type xmlSet struct {
-	XMLName        xml.Name    `xml:"Set"`
-	Device         int         `xml:"Device,attr"`
-	KeyCode        int         `xml:"KeyCode,attr"`
-	Action         int         `xml:"Action,attr"`
-	IsKeypressDelay int        `xml:"IsKeypressDelay,attr"`
-	Tip            string      `xml:"Tip,attr"`
-	AppPath        string      `xml:"AppPath,attr"`
-	AppEventID     int         `xml:"AppEventID,attr,omitempty"`
-	Text           string      `xml:"TextContent,attr,omitempty"`
-	Macro          []xmlEvent  `xml:",any"`
-	StartKeys      []xmlEvent
-	SendKeys       []xmlEvent
-}
-
-type xmlEvent struct {
-	XMLName       xml.Name `xml:"Index"`
-	Index         int      `xml:",attr"`
-	KeyCode       int      `xml:"KeyCode,attr"`
-	KeysGroup     int      `xml:"KeysGroup,attr"`
-	MakeBreakText string   `xml:"KeyMakeBreak,attr"`
-	Delay         int      `xml:"KeyDelay,attr"`
-	Display       string   `xml:"KeyDisplay,attr"`
 }
 
 // SetupMacroKeyEx 宏序列 → ClevoKeyEx[255](原 SetupMacroKeyEx 编码规则)。

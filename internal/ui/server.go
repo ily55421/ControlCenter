@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
+	"os"
 	"sync"
 	"time"
 
@@ -16,6 +16,7 @@ import (
 	"controlcenter/internal/cpuoc"
 	"controlcenter/internal/energysave"
 	"controlcenter/internal/fan"
+	"controlcenter/internal/flexikey"
 	"controlcenter/internal/gpu"
 	"controlcenter/internal/keyboard"
 	"controlcenter/internal/powermode"
@@ -90,6 +91,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/battery/refresh", s.apiBatteryRefresh)
 	mux.HandleFunc("/api/energy/sample", s.apiEnergySample)
 	mux.HandleFunc("/api/energy/apply", s.apiEnergyApply)
+	mux.HandleFunc("/api/flexikey/state", s.apiFlexikeyState)
+	mux.HandleFunc("/api/flexikey/apply", s.apiFlexikeyApply)
 	return mux
 }
 
@@ -127,6 +130,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 			"fan": w16&0x80 != 0, "energy": w16&0x100 != 0, "battery": w16&0x200 != 0,
 			"keyboard": w16&0x18 != 0, "turboFan": sup.TurboFan, "slowFan": sup.SlowFan,
 			"msHybrid": sup.MSHybridSwitch, "amdRyzen": sup.AMDRyzen, "dtt": sup.DTT,
+			"quietPlus": sup.QuietPlusOnly || sup.NVIDIAPowerOff,
 		},
 	})
 }
@@ -713,4 +717,83 @@ var writeOutImpl = func(string) error { return nil }
 // SetEventWriter 注入事件总线写入函数。
 func SetEventWriter(fn func(string) error) { writeOutImpl = fn }
 
-var _ = strconv.Itoa
+
+// apiFlexikeyState Flexikey 状态(GET):profile 列表/选中项/开关。
+func (s *Server) apiFlexikeyState(w http.ResponseWriter, r *http.Request) {
+	path := flexikey.DefaultPath()
+	store, err := flexikey.Load(path)
+	if err != nil {
+		errJSON(w, err)
+		return
+	}
+	_, statErr := os.Stat(path)
+	type profInfo struct {
+		Name  string `json:"name"`
+		Sel   bool   `json:"selected"`
+		KB    bool   `json:"kb"`
+		Mouse bool   `json:"mouse"`
+		Slots int    `json:"slots"`
+	}
+	list := make([]profInfo, 0, len(store.Profiles))
+	for _, p := range store.Profiles {
+		list = append(list, profInfo{Name: p.Name, Sel: p.IsSelected,
+			KB: p.IsKbEnable, Mouse: p.IsMouseEnable, Slots: len(p.Keys)})
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "path": path, "exists": statErr == nil, "profiles": list,
+		"kbEnabled":    s.as.ReadU8(appsettings.AddrFlexikeyKB) == 1,
+		"mouseEnabled": s.as.ReadU8(appsettings.AddrFlexikeyMouse) == 1,
+	})
+}
+
+// apiFlexikeyApply Flexikey 操作(POST {"action":"select|apply|disable","name":...})。
+func (s *Server) apiFlexikeyApply(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Action string `json:"action"`
+		Name   string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errJSON(w, err)
+		return
+	}
+	store, err := flexikey.Load(flexikey.DefaultPath())
+	if err != nil {
+		errJSON(w, err)
+		return
+	}
+	ctl := flexikey.NewController(flexikey.NewDriver(), s.as)
+	switch req.Action {
+	case "select":
+		found := false
+		for _, p := range store.Profiles {
+			p.IsSelected = p.Name == req.Name
+			if p.IsSelected {
+				found = true
+			}
+		}
+		if !found {
+			errJSON(w, fmt.Errorf("配置 %q 不存在", req.Name))
+			return
+		}
+		if err := store.Save(); err != nil {
+			errJSON(w, err)
+			return
+		}
+	case "apply":
+		if err := ctl.Apply(store.Selected()); err != nil {
+			errJSON(w, err)
+			return
+		}
+		_ = writeOutSafe("clevofnkey^205")
+	case "disable":
+		if err := ctl.DisableAll(); err != nil {
+			errJSON(w, err)
+			return
+		}
+		_ = writeOutSafe("clevofnkey^205")
+	default:
+		errJSON(w, fmt.Errorf("未知 action %q", req.Action))
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}

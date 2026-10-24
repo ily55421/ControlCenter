@@ -86,6 +86,7 @@ done
 - **03-电源模式引擎.md** — ChangePowerMode 全序列(SetPowerMode 编码、NV 上下电、GPU OC 联动、
   EnergyStar、ASPM、Windows 电源计划 GUID、AMD PPT/TDC/EDC、风扇联动、XTU 触发)
 - **00-架构与组件映射.md** — 组件映射与 AppSettings 4KB 布局总表(page 0-7 全部偏移含义)
+- **功能对比.html** — 原版 vs Go 版功能点矩阵/组件完成度/真机验证结果(单文件可视化页,浏览器直接打开;数据内联在 `<script>` 的 `COMPONENTS/MATRIX/TESTS` 常量中,改数即改页)
 
 ## 关键实现
 

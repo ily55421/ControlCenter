@@ -38,13 +38,18 @@ func (c *Client) GetPackage(command int) []byte {
 	return v
 }
 
-// SetWMI 子命令编码:data 低 3 字节 + 子命令在 byte[3],256 字节缓冲。
-// 对应原生 DCHU.SetWMI(command, SubCommand, data)。
-func (c *Client) SetWMI(command, subCommand int, data uint32) error {
+// encodeSetWMI 构造 SetWMI 的 256 字节缓冲:data 低 3 字节 + 子命令在 byte[3]。
+func encodeSetWMI(subCommand int, data uint32) []byte {
 	buf := make([]byte, 256)
 	binary.LittleEndian.PutUint32(buf[0:4], data)
 	buf[3] = byte(subCommand)
-	return c.b.SetData(command, buf)
+	return buf
+}
+
+// SetWMI 子命令编码下发。
+// 对应原生 DCHU.SetWMI(command, SubCommand, data)。
+func (c *Client) SetWMI(command, subCommand int, data uint32) error {
+	return c.b.SetData(command, encodeSetWMI(subCommand, data))
 }
 
 // SetWMIValue 无子命令版:直接下发 4 字节值(256 字节缓冲)。

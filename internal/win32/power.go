@@ -126,3 +126,50 @@ func SuspendState(hibernate bool) error {
 	}
 	return nil
 }
+
+// 盖子合上动作设置(GUID_BUTTONS / GUID_LIDCLOSE_ACTION)。
+var (
+	modPowerReadACIdx  = modpowrprof.NewProc("PowerReadACValueIndex")
+	modPowerReadDCIdx  = modpowrprof.NewProc("PowerReadDCValueIndex")
+	guidButtonsSubgroup = windows.GUID{Data1: 0x4f971e89, Data2: 0xeebd, Data3: 0x4455, Data4: [8]byte{0xa8, 0xde, 0x9e, 0x59, 0x04, 0x0e, 0x73, 0x47}}
+	guidLidCloseAction  = windows.GUID{Data1: 0x5ca83367, Data2: 0x6e45, Data3: 0x459f, Data4: [8]byte{0xa2, 0x7b, 0x47, 0x6b, 0x1d, 0x01, 0xc9, 0x36}}
+)
+
+// 盖子动作值(与 Windows 电源选项一致)。
+const (
+	LidActionNothing    = 0
+	LidActionSleep      = 1
+	LidActionHibernate  = 2
+	LidActionShutdown   = 3
+)
+
+// GetLidCloseAction 读当前电源计划的合盖动作(AC 与 DC 分别返回)。
+// 对应原版 CallingVariations.GetLIDACTIONAC/DC。
+func GetLidCloseAction() (ac, dc int, err error) {
+	active, err := GetActivePowerScheme()
+	if err != nil {
+		return 0, 0, err
+	}
+	read := func(p uintptr) (int, error) {
+		var v uint32
+		r, _, e := syscall.SyscallN(p,
+			0,
+			uintptr(unsafe.Pointer(&active)),
+			uintptr(unsafe.Pointer(&guidButtonsSubgroup)),
+			uintptr(unsafe.Pointer(&guidLidCloseAction)),
+			uintptr(unsafe.Pointer(&v)))
+		if r != 0 {
+			return LidActionSleep, fmt.Errorf("PowerReadValueIndex(lidclose): %w", e)
+		}
+		return int(v), nil
+	}
+	ac, err = read(modPowerReadACIdx.Addr())
+	if err != nil {
+		return 0, 0, err
+	}
+	dc, err = read(modPowerReadDCIdx.Addr())
+	if err != nil {
+		return 0, 0, err
+	}
+	return ac, dc, nil
+}
