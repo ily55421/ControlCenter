@@ -1,0 +1,23 @@
+# 逆向分析素材（体积大，且含原版反编译内容，不入库）
+_analysis/
+
+# 构建产物
+bin/
+dist/
+*.exe
+*.dll
+*.zip
+*.appx
+
+# 测试与临时输出
+*.log
+*.png
+Temp/
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
