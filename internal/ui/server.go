@@ -101,11 +101,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/flexikey/apply", s.apiFlexikeyApply)
 	return mux
 }
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
 func errJSON(w http.ResponseWriter, err error) {
 	writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 }
