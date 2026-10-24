@@ -212,6 +212,8 @@ const CHANGES = [
 "<b>节能页占位符接真数据</b>:电池 Wh/PD W 从 api/energy/sample 动态填充;清理 no-op 代码",
 "<b>单元测试 3→10 包</b>:新增 gpu(int16 非对称编码)/wmi(SetWMI 子命令编码)/appsettings(模式归一/ClevoID)/keyboard(Perkey 寻址)/energysave(调度重叠)/flexikey(XML 往返/宏编码)/powermode(循环链/参数格式)",
 "<b>死代码清理</b>:strings.ToLower/strconv.Itoa 占位、PAGE_INIT 冗余表达式、wattTimer no-op",
+"<b>Web UI 视觉重构</b>:全面对齐原版 CC40 霓虹视觉语言——黑底点阵、左侧图标栏(可折叠)、青色发光仪表盘(刻度+指针+辉光)、斜切标签、四角标面板、键帽图、色环取色、电池轮廓、点阵滑杆;21 条 API 功能接线全部保留,浏览器逐页截图核对 <code>internal/ui/web/index.html</code>",
+"<b>视觉与功能验证</b>:6 个主页面截图与原版逐页对照;浏览器端 POST 往返(fan/config、preference blueLight、kb brightness 同值回写)通过;uitest 新增 -hold/-port 支持常驻视觉验证",
 ];
 const GAPS = [
 "OSD 为文本+进度条分层窗口,非原版 ~80 张图片图标(功能等价,观感不同)",
