@@ -199,6 +199,11 @@ const TESTS = [
 ["盖子动作(本轮新增)","PowerReadAC/DCValueIndex","ac=1 dc=1(睡眠),读取成功","pass"],
 ["飞行模式(本轮新增)","SystemRadioState 注册表","读取=0(正常),写路径就绪(需管理员)","pass"],
 ["profile.xml 兼容(本轮重写)","Save→Load 往返单测","Profile/Set/Index/宏事件/MakeBreak 全字段一致","pass"],
+["独立 GUI 应用窗口",".exe 启动 + 窗口子类名枚举","窗口存在;子类名无 OmniboxView/TabStrip(无地址栏/标签栏)","pass"],
+["面板深链路由","Edge headless --dump-dom ×10","#keyboard/#gpuoc/#flexicharger/#battery/#preferences/#energy/#cpu/#fan/#flexikey/无 hash 全部命中正确页面与激活项","pass"],
+["启动器复用同一服务","运行 ccfan / cckeyboard","无错误输出、不新建服务、ccapp 仍唯一","pass"],
+["托盘常驻","ccfnkey 启动后存活检查","进程常驻(修复前启动即退出)","pass"],
+["单实例检测(回归)","internal/win32 单测","ProcessExistsOther 排除自身 PID;ProcessExistsByName 仍见自身","pass"],
 ];
 const CHANGES = [
 "<b>麦克风静音真实化</b>:事件 38 从「仅写标志位」改为 CoreAudio COM(IAudioEndpointVolume.SetMute),等价原版 DgMic,真机验证通过 <code>internal/win32/audio.go</code>",
@@ -214,6 +219,11 @@ const CHANGES = [
 "<b>死代码清理</b>:strings.ToLower/strconv.Itoa 占位、PAGE_INIT 冗余表达式、wattTimer no-op",
 "<b>Web UI 视觉重构</b>:全面对齐原版 CC40 霓虹视觉语言——黑底点阵、左侧图标栏(可折叠)、青色发光仪表盘(刻度+指针+辉光)、斜切标签、四角标面板、键帽图、色环取色、电池轮廓、点阵滑杆;21 条 API 功能接线全部保留,浏览器逐页截图核对 <code>internal/ui/web/index.html</code>",
 "<b>视觉与功能验证</b>:6 个主页面截图与原版逐页对照;浏览器端 POST 往返(fan/config、preference blueLight、kb brightness 同值回写)通过;uitest 新增 -hold/-port 支持常驻视觉验证",
+"<b>独立 GUI 应用窗口</b>:新增 <code>win32.OpenAppWindow</code>——以 Edge/Chrome app 模式打开面板(无地址栏、无标签栏、独立任务栏图标,标题 Control Center),缺失时回退默认浏览器;ccapp、托盘、面板启动器、热键全部接入 <code>internal/win32/appwindow.go</code>",
+"<b>修复 GUI 永不出现的阻断缺陷</b>:单实例检测用 <code>ProcessExistsByName</code> 会匹配到自身,ccapp/ccfnkey 启动即打印「已在运行」并退出;新增 <code>ProcessExistsOther</code>(排除自身 PID)并附回归单测 <code>internal/win32/proc.go</code>",
+"<b>面板启动器复用同一 UI 服务</b>:ccapp 记录端口到 <code>~/.controlcenter/ui.port</code>,launcher 新增 resolvePort(端口文件 → 探测 8765 → 新建),ccfan/cckeyboard 等不再重复起服务或报「服务启动失败」 <code>internal/launcher/launcher.go</code>",
+"<b>面板深链与自动刷新</b>:Web UI 支持 <code>#page</code> 与原版别名(keyboard/perkey/fan/gpuoc/cpuoc/battery/flexicharger/preferences…);页面每 15s 比对服务端 boot 标记,ccapp 重启后自动刷新到新版界面 <code>internal/ui/server.go</code>",
+"<b>热键/托盘打开面板回退</b>:原版 UWP 未安装时改为打开本项目对应面板窗口,不再静默失败 <code>internal/uwp/uwp.go</code>",
 ];
 const GAPS = [
 "OSD 为文本+进度条分层窗口,非原版 ~80 张图片图标(功能等价,观感不同)",

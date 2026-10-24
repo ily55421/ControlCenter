@@ -57,11 +57,24 @@ func ListProcesses() []ProcessEntry {
 	return out
 }
 
-// ProcessExistsByName 进程名(小写)是否存在。
+// ProcessExistsByName 进程名(小写)是否存在(含调用者自身)。
 func ProcessExistsByName(name string) bool {
 	name = strings.ToLower(name)
 	for _, p := range ListProcesses() {
 		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ProcessExistsOther 是否存在同名进程,且不是当前进程(用于单实例检测)。
+// 注意:直接用 ProcessExistsByName 检测自身同名进程会恒为真,导致进程启动即退出。
+func ProcessExistsOther(name string) bool {
+	name = strings.ToLower(name)
+	self := uint32(os.Getpid())
+	for _, p := range ListProcesses() {
+		if p.Name == name && p.PID != self {
 			return true
 		}
 	}

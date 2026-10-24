@@ -243,6 +243,8 @@ const rgbHex=c=>`#${[c.r,c.g,c.b].map(v=>v.toString(16).padStart(2,"0")).join(""
 let fanTimer=null;
 async function loadSystem(){
  const st=await api("status");STATUS=st;
+ // 服务重启检测:新进程 boot 标记变化 → 自动刷新,避免窗口停留旧版页面
+ if(st.boot){if(window._boot&&window._boot!==st.boot){location.reload();return}window._boot=st.boot}
  $("#modeline").textContent=`${st.manufacturer||"—"} ${st.product||""} · BIOS ${st.bios||"—"} · ${st.cpu||"—"} · ClevoID ${st.clevoID} · 客户 ${st.customerID}`;
  const mo=await api("mode");const opts=await api("mode/options");
  const fc=await api("fan/config");const tbl=(await api("fan/table")).tables;
@@ -677,12 +679,24 @@ async function saveGPU(){if(!confirm("切换 GPU 模式将立即重启,继续?")
  await api("preference",{gpuSwitch:+$("#gpusw").value});toast("已下发,即将重启")}
 async function saveLang(){await api("preference",{language:+$("#lang").value});toast("语言已切换")}
 window.saveKbPref=saveKbPref;window.saveDisplay=saveDisplay;window.saveGPU=saveGPU;window.saveLang=saveLang;
-/* ---------- 启动 ---------- */
+/* ---------- 启动(支持 #page 深链:面板启动器 / 托盘 / 热键直达) ---------- */
 const PAGE_INIT={system:loadSystem,kb:loadKB,flexikey:loadFlexikey,charger:loadCharger,
  cpu:loadCPU,gpu:loadGPU,bat:loadBat,energy:loadEnergy,pref:loadPref};
+// 原版协议/启动器使用的页名 → 本 UI 页 ID
+const PAGE_ALIAS={home:"system",power:"system",fan:"system",mode:"system",system:"system",
+ keyboard:"kb",perkey:"kb",led:"kb",kb:"kb",flexikey:"flexikey",flexiacc:"flexikey",
+ charger:"charger",flexicharger:"charger",cpu:"cpu",cpuoc:"cpu",gpu:"gpu",gpuoc:"gpu",
+ battery:"bat",bat:"bat",energy:"energy",energysave:"energy",pref:"pref",preference:"pref",
+ preferences:"pref",setting:"pref",settings:"pref",monitor:"system"};
+function pageFromHash(){const h=(location.hash||"").replace(/^#\/?/,"").toLowerCase();
+ return PAGE_ALIAS[h]||null}
 PAGES.forEach(p=>{const d=document.createElement("div");d.className="page";d.id="page-"+p.id;
  $("#main").appendChild(d)});
-(async()=>{try{await loadSystem();nav("system")}catch(e){
+window.addEventListener("hashchange",()=>{const p=pageFromHash();if(p)nav(p)});
+// 每 15 秒确认服务端本进程标记是否变化(ccapp 重启/升级后自动刷新到新 UI)
+setInterval(async()=>{try{const st=await api("status");
+ if(window._boot&&st.boot&&st.boot!==window._boot)location.reload()}catch(e){}},15000);
+(async()=>{try{await loadSystem();nav(pageFromHash()||"system")}catch(e){
  $("#main").innerHTML=`<div class="panel"><i class="cnr c1"></i><i class="cnr c2"></i><i class="cnr c3"></i><i class="cnr c4"></i>
   <h3>无法连接 ACPI 桥驱动</h3><p>${e.message}</p>
   <p class="hint">请确认 AcpiBridge 驱动已安装且以管理员身份运行。</p></div>`;}})();

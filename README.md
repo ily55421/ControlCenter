@@ -53,6 +53,28 @@ done
 命令行(可选):`ControlCenter.exe -install` / `-uninstall` / `-selftest`(与按钮等价,便于自动化)。
 窗口内日志区实时显示操作结果;未提权时自动弹出 UAC,**无需任何 bat 脚本**。
 
+## GUI 界面
+
+功能面板是**独立应用窗口**(不是浏览器标签页):主界面窗口由 `ccapp` 通过 Edge/Chrome 的
+**app 模式**启动——无地址栏、无标签栏、独立任务栏图标、标题为 `Control Center`,观感与操作
+等同原版原生窗口;找不到 app 模式浏览器时自动回退默认浏览器。
+
+| 入口 | 行为 |
+|---|---|
+| `ccapp.exe`(主界面) | 单实例检测 → 启动内嵌 UI(8765,占用则随机)→ 打开**独立应用窗口** → 常驻后台 |
+| `ccfnkey.exe`(托盘) | 托盘图标 + 5 种电源模式菜单 + 点击打开主窗口;随会话常驻 |
+| `ccfan/cckeyboard/ccgpuoc/ccbattery/ccenergy/ccpuoc/ccflexikey` | 复用**同一个** UI 服务,直接打开对应面板(`launcher` 经端口文件 `~/.controlcenter/ui.port` 复用,不再重复起服务) |
+| 托盘/热键"打开面板" | 原版 UWP 已安装则走原版通道(互操作);未安装则打开本项目对应面板窗口 |
+
+面板深链:`http://127.0.0.1:8765/#<page>`,`page` 支持
+`system / kb / flexikey / charger / cpu / gpu / bat / energy / pref`,以及原版别名
+(`keyboard`、`perkey`、`fan`、`power`、`gpuoc`、`cpuoc`、`battery`、`flexicharger`、`preferences` 等)。
+
+窗口内每 15 秒核对服务端 `boot` 标记:ccapp 重启或升级后窗口**自动刷新**到新版本 UI。
+
+退出:托盘菜单"退出"关闭托盘;关闭窗口仅关窗口(ccapp 保持后台服务,与主界面窗口分离)。
+彻底退出可运行 `ccutil service remove` 或结束 `ccapp.exe` / `ccfnkey.exe`。
+
 ## 架构
 
 ```

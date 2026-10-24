@@ -7,7 +7,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"controlcenter/internal/launcher"
 
 	"controlcenter/internal/appsettings"
 	"controlcenter/internal/cpuoc"
@@ -25,7 +28,7 @@ func main() {
 	log.SetFlags(log.Ltime)
 
 	// 单实例(同名进程检测,与原版一致)
-	if win32.ProcessExistsByName("ccapp.exe") {
+	if win32.ProcessExistsOther("ccapp.exe") {
 		fmt.Println("Control Center 已在运行")
 		return
 	}
@@ -56,13 +59,18 @@ func main() {
 		srv.GPUOCBase = filepath.Dir(pm.ControlGPUPath)
 	}
 	// 固定端口 8765 优先(与启动器/托盘约定一致),被占用则回退随机端口
-	addr := ""
+	addr, uiPort := "", 0
 	if port, err := srv.ServeOn(8765); err == nil {
-		addr = fmt.Sprintf("http://127.0.0.1:%d/", port)
+		addr, uiPort = fmt.Sprintf("http://127.0.0.1:%d/", port), port
 	} else if a, err2 := srv.Start(); err2 == nil {
 		addr = a
+		uiPort = portOf(a)
 	} else {
 		log.Fatalf("UI 服务启动失败: %v", err2)
+	}
+	// 记录端口,使托盘/面板启动器复用本进程的 UI 服务
+	if uiPort > 0 {
+		launcher.WritePort(uiPort)
 	}
 	fmt.Println("Control Center (Go) 已启动:", addr)
 
@@ -100,8 +108,8 @@ func main() {
 		}
 	}()
 
-	// 打开浏览器
-	_ = win32.ShellExecuteOpen(addr)
+	// 以独立 GUI 应用窗口打开(Edge/Chrome app 模式,回退默认浏览器)
+	win32.OpenAppWindow(addr)
 	select {}
 }
 
@@ -129,4 +137,15 @@ func exitProcess() {
 	// cpuoc 包引用仅为保持与原版关闭序列一致的语义
 	_ = cpuoc.WaitXTUIdle
 	log.Fatal("退出")
+}
+
+// portOf 从 "http://127.0.0.1:PORT/" 解析端口。
+func portOf(addr string) int {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return 0
+	}
+	var p int
+	fmt.Sscanf(strings.Trim(addr[i+1:], "/"), "%d", &p)
+	return p
 }

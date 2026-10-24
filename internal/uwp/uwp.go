@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"controlcenter/internal/eventbus"
+	"controlcenter/internal/launcher"
 	"controlcenter/internal/win32"
 )
 
@@ -56,7 +57,14 @@ func Installed(identity string) bool {
 	return strings.TrimSpace(string(out)) != ""
 }
 
-// Launch 启动应用:已装走 w_arg253 launchapp(服务拉起),否则协议激活。
+// panelPage 原版应用 key → 本 UI 页 ID(未装原版 UWP 时用自有面板窗口)。
+var panelPage = map[string]string{
+	"power": "system", "fan": "system", "flexikey": "flexikey", "flexiacc": "flexikey",
+	"keyboard": "kb", "perkey": "kb", "gpu": "gpu", "cpu": "cpu",
+	"energy": "energy", "battery": "bat",
+}
+
+// Launch 启动应用:原版 UWP 已装则走原通道(互操作);否则打开自有 GUI 面板窗口。
 func Launch(key string) {
 	app, ok := Apps[key]
 	if !ok {
@@ -69,6 +77,11 @@ func Launch(key string) {
 				_ = win32.ShellExecuteOpen(app.URI)
 			}
 		}()
+		return
+	}
+	// 原版组件未安装 → 用本项目的 GUI 应用窗口打开对应面板
+	if page, ok := panelPage[key]; ok {
+		launcher.Open(page, "Control Center")
 		return
 	}
 	if app.URI != "" {

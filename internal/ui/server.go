@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,15 +27,17 @@ import (
 
 // Server Web UI 服务。
 type Server struct {
-	w   *wmi.Client
-	as  *appsettings.Store
-	kb  *keyboard.Controller
-	fc  *fan.Controller
-	pm  *powermode.Engine
+	w  *wmi.Client
+	as *appsettings.Store
+	kb *keyboard.Controller
+	fc *fan.Controller
+	pm *powermode.Engine
 
 	mu       sync.Mutex
 	sampler  *energysave.Sampler
 	batState *batteryState
+
+	bootStamp string // 本进程启动标记:页面据此在服务重启后自动刷新
 
 	GPUOCBase string // ControlGPU.exe 所在目录
 }
@@ -46,7 +49,10 @@ type batteryState struct {
 
 // New 创建服务。
 func New(w *wmi.Client, as *appsettings.Store, kb *keyboard.Controller, fc *fan.Controller, pm *powermode.Engine) *Server {
-	return &Server{w: w, as: as, kb: kb, fc: fc, pm: pm}
+	return &Server{
+		w: w, as: as, kb: kb, fc: fc, pm: pm,
+		bootStamp: strconv.FormatInt(time.Now().UnixNano(), 36),
+	}
 }
 
 // Start 启动 HTTP 服务(随机本地端口)并返回地址。
@@ -100,7 +106,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)
 }
-
 func errJSON(w http.ResponseWriter, err error) {
 	writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 }
@@ -112,6 +117,7 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	tbl := smbios.Get()
 	writeJSON(w, map[string]any{
 		"ok":          true,
+		"boot":        s.bootStamp,
 		"wmi16":       w16,
 		"kbType":      s.kb.Type(),
 		"mode":        s.as.GetPowerMode(),

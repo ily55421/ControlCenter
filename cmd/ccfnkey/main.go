@@ -29,7 +29,7 @@ func main() {
 	log.SetFlags(log.Ltime | log.Ldate)
 
 	// 单实例
-	if win32.ProcessExistsByName("ccfnkey.exe") {
+	if win32.ProcessExistsOther("ccfnkey.exe") {
 		return
 	}
 
@@ -180,7 +180,7 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 	update()
 
 	tray.OnCommand(idOpen, func() {
-		_ = win32.ShellExecuteOpen("http://127.0.0.1:8765/")
+		win32.OpenAppWindow("http://127.0.0.1:8765/")
 		_ = eventbus.WriteOut("clevofnkey^149")
 	})
 	modeCmd := func(m appsettings.ModeType) func() {
@@ -196,7 +196,7 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 		os.Exit(0)
 	})
 	tray.SetOnClick(func() {
-		_ = win32.ShellExecuteOpen("http://127.0.0.1:8765/")
+		win32.OpenAppWindow("http://127.0.0.1:8765/")
 	})
 
 	pm.OnChanged(func(from, to appsettings.ModeType) { update() })

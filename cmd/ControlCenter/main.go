@@ -185,7 +185,7 @@ func startAll() {
 		}
 	} else {
 		log("主界面已在运行 → http://127.0.0.1:8765/")
-		_ = win32.ShellExecuteOpen("http://127.0.0.1:8765/")
+		win32.OpenAppWindow("http://127.0.0.1:8765/")
 	}
 }
 

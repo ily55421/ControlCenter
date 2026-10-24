@@ -27,18 +27,34 @@ func registryPortFile() string {
 	return `.controlcenter\ui.port`
 }
 
-// Open 打开功能页(page 为 UI 页 ID);若 UI 服务未运行则以固定端口拉起。
+// WritePort 记录当前 UI 服务端口(供托盘/面板启动器复用)。
+func WritePort(port int) {
+	_ = os.MkdirAll(strings.TrimSuffix(registryPortFile(), `\ui.port`), 0o755)
+	_ = os.WriteFile(registryPortFile(), []byte(fmt.Sprintf("%d", port)), 0o644)
+}
+
+// resolvePort 解析可用的 UI 端口:端口文件 → 默认 8765 → 新建服务。
+func resolvePort() int {
+	if p := readPort(); p != 0 && alive(p) {
+		return p
+	}
+	// 端口文件缺失/陈旧:探测 ccapp 的固定端口
+	if alive(8765) {
+		WritePort(8765)
+		return 8765
+	}
+	return startUI()
+}
+
+// Open 打开功能页(page 为 UI 页 ID);UI 服务未运行则以固定端口拉起。
 func Open(page, title string) {
-	port := readPort()
-	if port == 0 || !alive(port) {
-		port = startUI()
-		if port == 0 {
-			fmt.Println("UI 服务启动失败")
-			return
-		}
+	port := resolvePort()
+	if port == 0 {
+		fmt.Println("UI 服务启动失败")
+		return
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/#%s", port, page)
-	_ = win32.ShellExecuteOpen(url)
+	win32.OpenAppWindow(url)
 	time.Sleep(1200 * time.Millisecond)
 	_ = win32.FocusWindow(title)
 }
