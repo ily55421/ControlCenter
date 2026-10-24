@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,10 +17,22 @@ import (
 )
 
 func main() {
+	hold := flag.Bool("hold", false, "探测后保持服务常驻(供浏览器视觉验证)")
+	port := flag.Int("port", 0, "固定端口(0=随机)")
+	flag.Parse()
 	w := wmi.Default
 	as := appsettings.Default
 	srv := ui.New(w, as, keyboard.Default, fan.Default, powermode.New(w, as, fan.Default, gpu.New(as, w)))
-	addr, err := srv.Start()
+	var addr string
+	var err error
+	if *port > 0 {
+		if _, err = srv.ServeOn(*port); err != nil {
+			panic(err)
+		}
+		addr = fmt.Sprintf("http://127.0.0.1:%d/", *port)
+	} else if addr, err = srv.Start(); err != nil {
+		panic(err)
+	}
 	if err != nil { panic(err) }
 	fmt.Println("UI:", addr)
 	time.Sleep(300 * time.Millisecond)
@@ -29,5 +42,9 @@ func main() {
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 300))
 		fmt.Printf("%-18s %d %s\n", p, r.StatusCode, string(b))
 		r.Body.Close()
+	}
+	if *hold {
+		fmt.Println("hold 模式:服务常驻,Ctrl+C 退出")
+		select {}
 	}
 }

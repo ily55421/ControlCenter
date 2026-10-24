@@ -2,416 +2,522 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Control Center (Go)</title>
+<title>Control Center</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{--bg:#0d0f14;--panel:#161a22;--panel2:#1d222d;--line:#2a3140;--txt:#e8eaf0;--dim:#8b93a7;
---acc:#ff00d2;--acc2:#00e0ff;--ok:#37c871;--warn:#ffb020;--err:#ff4d5e}
+:root{--bg:#000;--panel:rgba(8,10,12,.72);--line:#262c33;--tick:#8f99a3;--txt:#e8eef2;--dim:#66707a;
+--cyan:#25c8ff;--cyan-d:#0a7fa8;--lime:#c8ff00;--yellow:#ffc400;--red:#ff3b4d;--blue:#2f7bff}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--txt);font:14px/1.6 "Segoe UI",system-ui,sans-serif;min-height:100vh}
-header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--line);
-background:linear-gradient(90deg,#12151d,#0d0f14);position:sticky;top:0;z-index:9}
-header .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--acc),var(--acc2))}
-header h1{font-size:17px;font-weight:600}
-header .sub{color:var(--dim);font-size:12px}
-nav{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
-nav button{background:transparent;border:1px solid transparent;color:var(--dim);padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px}
-nav button:hover{color:var(--txt);background:var(--panel2)}
-nav button.active{color:#fff;background:var(--panel2);border-color:var(--line)}
-main{max-width:1180px;margin:0 auto;padding:22px}
-.page{display:none}
-.page.active{display:block}
+html,body{height:100%}
+body{background:var(--bg) radial-gradient(#0d1114 1px,transparent 1.4px);background-size:5px 5px;
+color:var(--txt);font:14px/1.6 "Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font-family:inherit}
+#app{display:flex;min-height:100vh}
+/* ---------- 侧栏 ---------- */
+#side{width:118px;flex:none;background:#0b0d0f;border-right:1px solid #15181b;display:flex;flex-direction:column;transition:width .18s}
+#side.min{width:62px}
+#side.min .lbl,#side.min .side-top span{display:none}
+.side-top{height:52px;background:#101316;border:0;border-bottom:1px solid #15181b;color:#9aa4ad;cursor:pointer;
+display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px}
+#nav{display:flex;flex-direction:column}
+#nav button{display:flex;flex-direction:column;align-items:center;gap:7px;padding:15px 4px 13px;background:transparent;
+border:0;border-bottom:1px solid #101316;color:#59636d;cursor:pointer;font-size:12px}
+#nav button svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+#nav button:hover{color:#aeb8c1;background:#0e1114}
+#nav button.on{background:#17191c;color:var(--lime)}
+#nav button.on svg{filter:drop-shadow(0 0 7px rgba(200,255,0,.55))}
+/* ---------- 顶栏 ---------- */
+#col{flex:1;min-width:0;display:flex;flex-direction:column}
+header{height:46px;flex:none;display:flex;align-items:center;justify-content:center;position:relative;
+background:linear-gradient(#0a0c0e,#050708);border-bottom:1px solid #14171a}
+.htitle{font-size:17px;font-weight:600;letter-spacing:.6px}
+.hbtns{position:absolute;right:12px;display:flex;gap:8px}
+.hbtns button{width:32px;height:26px;background:#101316;border:1px solid #23282d;color:#9aa4ad;border-radius:3px;cursor:pointer;font-size:13px}
+.hbtns button:hover{color:#fff;border-color:#39424b}
+#modeline{color:#5f6a74;font-size:12px;padding:10px 20px 0;letter-spacing:.4px}
+main{padding:12px 20px 46px;flex:1}
+.page{display:none}.page.on{display:block}
+/* ---------- 面板 ---------- */
+.panel{position:relative;border:1px solid var(--line);background:var(--panel);padding:14px 16px 16px;margin-bottom:14px}
+.cnr{position:absolute;width:9px;height:9px;border:0 solid var(--tick);pointer-events:none}
+.c1{top:-1px;left:-1px;border-top-width:1px;border-left-width:1px}
+.c2{top:-1px;right:-1px;border-top-width:1px;border-right-width:1px}
+.c3{bottom:-1px;left:-1px;border-bottom-width:1px;border-left-width:1px}
+.c4{bottom:-1px;right:-1px;border-bottom-width:1px;border-right-width:1px}
+.panel h3{font-size:13px;font-weight:600;color:#cfd6dc;letter-spacing:2px;margin-bottom:12px}
 .grid{display:grid;gap:14px}
-.g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-.g3{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-.card h3{font-size:14px;color:var(--acc2);margin-bottom:10px;font-weight:600}
-.row{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}
-.row label{min-width:110px;color:var(--dim);font-size:13px}
-.row .val{min-width:52px;text-align:right;font-variant-numeric:tabular-nums}
-input[type=range]{flex:1;accent-color:var(--acc)}
-select,input[type=number],input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
-border-radius:7px;padding:6px 10px;font-size:13px}
-button.act{background:linear-gradient(135deg,#272d3b,#1d2230);border:1px solid var(--line);color:var(--txt);
-padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px}
-button.act:hover{border-color:var(--acc)}
-button.act.primary{background:linear-gradient(135deg,var(--acc),#b8009a);border-color:transparent;color:#fff}
-button.act.blue{background:linear-gradient(135deg,#00a8ff,#0077c8);border-color:transparent;color:#fff}
-button.act:disabled{opacity:.45;cursor:not-allowed}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
-.tile{background:linear-gradient(160deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:14px;
-padding:20px 16px;text-align:center;cursor:pointer;transition:.15s}
-.tile:hover{transform:translateY(-3px);border-color:var(--acc)}
-.tile .ico{font-size:34px}
-.tile .t{margin-top:8px;font-weight:600}
-.tile .d{color:var(--dim);font-size:12px;margin-top:4px}
-.tile.off{opacity:.35;pointer-events:none}
-.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-.mode{border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center;cursor:pointer;background:var(--panel2)}
-.mode .ico{font-size:30px}
-.mode .n{margin-top:6px;font-weight:600}
-.mode.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.row{display:flex;align-items:center;gap:12px;margin:9px 0;flex-wrap:wrap}
+.row label.k{min-width:96px;color:var(--dim);font-size:13px}
+.val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--lime)}
+/* ---------- 斜切标签 ---------- */
+.tabrow{display:flex;gap:30px;justify-content:center;align-items:center;margin:4px 0 16px;flex-wrap:wrap}
+.tab{transform:skewX(-14deg);padding:5px 28px;color:var(--dim);font-size:15px;cursor:pointer;background:transparent;border:0;letter-spacing:1px}
+.tab>span{display:block;transform:skewX(14deg)}
+.tab:hover{color:#cfd6dc}
+.tab.on{background:var(--cyan);color:#00161c;font-weight:600;text-shadow:none}
+.tab.y.on{background:var(--yellow);color:#201500}
+.tab.sm{padding:3px 16px;font-size:13px}
+/* ---------- 数字/仪表 ---------- */
+.bignum{font-size:46px;font-weight:200;line-height:1.05;letter-spacing:1px}
+.unit{color:var(--dim);font-size:13px}
+canvas.dial{display:block;margin:0 auto;filter:drop-shadow(0 0 8px rgba(37,200,255,.28))}
+.stat3{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;padding:0 8px}
+.stat3 .c{text-align:center}
+.stat3 .l{color:var(--dim);font-size:12px;display:flex;gap:6px;justify-content:center;align-items:center}
+/* ---------- 条 ---------- */
+.bar{height:7px;background:#101418;position:relative;border-radius:0;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:radial-gradient(circle at 3px 3.5px,var(--lime) 1.7px,transparent 2.3px) 0 0/9px 7px repeat-x}
+.bar.cy>i{background:radial-gradient(circle at 3px 3.5px,var(--cyan) 1.7px,transparent 2.3px) 0 0/9px 7px repeat-x}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 16px;font-size:13px}
 .kv b{color:var(--dim);font-weight:400}
-.gauge{display:flex;flex-direction:column;align-items:center}
-.gauge .num{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
-.gauge .lbl{color:var(--dim);font-size:12px}
-.bar{height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;width:100%;margin-top:6px}
-.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--acc2),var(--acc));border-radius:4px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left}
-th{color:var(--dim);font-weight:500}
-.badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:12px;background:var(--panel2);border:1px solid var(--line)}
-.badge.ok{color:var(--ok);border-color:var(--ok)}
-.badge.warn{color:var(--warn);border-color:var(--warn)}
-.badge.err{color:var(--err);border-color:var(--err)}
-.toast{position:fixed;bottom:24px;right:24px;background:var(--panel2);border:1px solid var(--acc);
-padding:10px 18px;border-radius:10px;opacity:0;transition:.3s;pointer-events:none;z-index:99}
+/* ---------- 滑杆 ---------- */
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:5px;background:
+ radial-gradient(circle at 3px 2.5px,var(--lime) 1.5px,transparent 2.1px) 0 0/14px 5px repeat-x,#0c1013}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:5px;height:19px;background:#e8eef2;margin-top:-7px;
+ box-shadow:0 0 7px rgba(255,255,255,.7)}
+input[type=range]::-moz-range-track{height:5px;background:
+ radial-gradient(circle at 3px 2.5px,var(--lime) 1.5px,transparent 2.1px) 0 0/14px 5px repeat-x,#0c1013}
+input[type=range]::-moz-range-thumb{width:5px;height:19px;border:0;border-radius:0;background:#e8eef2}
+input[type=range].cy::-webkit-slider-runnable-track{background:
+ radial-gradient(circle at 3px 2.5px,var(--cyan) 1.5px,transparent 2.1px) 0 0/14px 5px repeat-x,#0c1013}
+/* ---------- 控件 ---------- */
+select,input[type=number],input[type=text]{background:#0c1013;border:1px solid #262c33;color:var(--txt);
+border-radius:2px;padding:6px 10px;font-size:13px}
+button.act{background:#101418;border:1px solid #2c343c;color:#cfd6dc;padding:7px 20px;cursor:pointer;font-size:13px;
+letter-spacing:1px;transform:skewX(-10deg)}
+button.act>span{display:block;transform:skewX(10deg)}
+button.act:hover{border-color:var(--cyan);color:#fff}
+button.act.pri{background:var(--cyan);border-color:var(--cyan);color:#00161c;font-weight:600}
+button.act.warn{background:var(--yellow);border-color:var(--yellow);color:#201500;font-weight:600}
+button.act:disabled{opacity:.4;cursor:not-allowed}
+.sw{position:relative;width:40px;height:20px;flex:none}
+.sw input{opacity:0;width:0;height:0}
+.sw i{position:absolute;inset:0;background:#0c1013;border:1px solid #2c343c;cursor:pointer}
+.sw i:before{content:"";position:absolute;width:14px;height:14px;left:2px;top:2px;background:#59636d;transition:.15s}
+.sw input:checked+i{border-color:var(--lime)}
+.sw input:checked+i:before{left:22px;background:var(--lime);box-shadow:0 0 8px rgba(200,255,0,.6)}
+/* ---------- 磁贴 ---------- */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 10px}
+.tile{display:flex;flex-direction:column;align-items:center;gap:7px;color:#4d5761;font-size:12px;cursor:pointer;background:transparent;border:0}
+.tile svg{width:38px;height:38px;stroke:currentColor;fill:none;stroke-width:1.4}
+.tile.on{color:var(--lime)}
+.tile.on svg{filter:drop-shadow(0 0 8px rgba(200,255,0,.5))}
+.tile:hover{color:#aeb8c1}.tile.on:hover{color:var(--lime)}
+/* ---------- 键盘图 ---------- */
+.kb{display:flex;flex-direction:column;gap:5px;user-select:none}
+.kbrow{display:flex;gap:5px}
+.key{flex:1;height:36px;min-width:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#b9c2ca;
+background:linear-gradient(#191d21,#0b0d0f);border:1px solid #23282d;border-radius:4px;box-shadow:0 2px 0 #000;cursor:default}
+.key.glow{cursor:pointer}
+/* ---------- 色轮 ---------- */
+.wheelbox{position:relative;width:250px;height:250px;margin:0 auto}
+.wheel{position:absolute;inset:0;border-radius:50%;cursor:crosshair;
+background:conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);
+-webkit-mask:radial-gradient(circle,transparent 57%,#000 59%);mask:radial-gradient(circle,transparent 57%,#000 59%)}
+.wheelc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;color:#cfd6dc;font-size:14px;pointer-events:none}
+.halo{position:absolute;inset:-46px;border-radius:50%;pointer-events:none;
+background:conic-gradient(#f003,#ff03,#0f03,#0ff3,#00f3,#f0f3,#f003);filter:blur(14px);
+-webkit-mask:radial-gradient(circle,transparent 40%,#000 62%,transparent 78%);mask:radial-gradient(circle,transparent 40%,#000 62%,transparent 78%)}
+/* ---------- 电池 ---------- */
+.batt{position:relative;width:270px;height:118px;border:2px solid #cfd6dc;border-radius:10px;margin:8px auto;display:flex;align-items:center;justify-content:center}
+.batt:after{content:"";position:absolute;right:-13px;top:36px;width:10px;height:42px;background:#cfd6dc;border-radius:0 4px 4px 0}
+.batt .fill{position:absolute;left:5px;top:5px;bottom:5px;background:radial-gradient(circle at 3px 3px,#cfd6dc 1.4px,transparent 2px) 0 0/7px 7px;opacity:.75;border-radius:5px}
+.batt .pct{position:relative;font-size:50px;font-weight:800;letter-spacing:3px;text-shadow:0 0 12px #000}
+.plug{color:var(--lime);font-size:13px;text-align:center;margin-bottom:6px}
+/* ---------- 徽章/提示 ---------- */
+.badge{display:inline-block;padding:2px 12px;border:1px solid #2c343c;color:#aeb8c1;font-size:12px;letter-spacing:1px}
+.badge.ok{color:var(--lime);border-color:var(--lime)}
+.badge.warn{color:var(--yellow);border-color:var(--yellow)}
+.badge.err{color:var(--red);border-color:var(--red)}
+.hint{color:#4d5761;font-size:12px;margin-top:8px;letter-spacing:.3px}
+canvas.chart{width:100%;height:170px;background:transparent}
+.toast{position:fixed;bottom:26px;right:26px;background:#0c1013;border:1px solid var(--cyan);color:var(--txt);
+padding:10px 20px;opacity:0;transition:.25s;pointer-events:none;z-index:99;letter-spacing:1px;box-shadow:0 0 18px rgba(37,200,255,.25)}
 .toast.show{opacity:1}
-.switch{position:relative;width:42px;height:22px;flex:none}
-.switch input{opacity:0;width:0;height:0}
-.switch i{position:absolute;inset:0;background:var(--panel2);border:1px solid var(--line);border-radius:11px;cursor:pointer;transition:.2s}
-.switch i:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;border-radius:50%;background:var(--dim);transition:.2s}
-.switch input:checked+i{background:var(--acc);border-color:var(--acc)}
-.switch input:checked+i:before{left:22px;background:#fff}
-canvas{width:100%;height:180px;background:var(--panel2);border-radius:8px}
-.hint{color:var(--dim);font-size:12px;margin-top:6px}
+@media (max-width:860px){#side{width:62px}#side .lbl{display:none}}
 </style>
 </head>
 <body>
-<header>
-  <div class="logo"></div>
-  <div><h1>Control Center</h1><div class="sub" id="modeline">正在连接 ACPI 桥驱动…</div></div>
+<div id="app">
+ <aside id="side">
+  <button class="side-top" id="sideToggle" title="折叠/展开侧栏">☰<span></span></button>
   <nav id="nav"></nav>
-</header>
-<main id="main"></main>
+ </aside>
+ <div id="col">
+  <header>
+   <div class="htitle">Control Center</div>
+   <div class="hbtns">
+    <button id="btnInfo" title="系统信息">ⓘ</button>
+    <button id="btnFull" title="全屏">⛶</button>
+    <button id="btnClose" title="关闭页面">✕</button>
+   </div>
+  </header>
+  <div id="modeline">正在连接 ACPI 桥驱动…</div>
+  <main id="main"></main>
+ </div>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
 const $=(s,el=document)=>el.querySelector(s);
 const $$=(s,el=document)=>[...el.querySelectorAll(s)];
 const api=async(u,d)=>{const r=await fetch("/api/"+u,{method:d?"POST":"GET",
-  headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined});
-  if(!r.ok)throw new Error("HTTP "+r.status);return r.json()};
+ headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined});
+ if(!r.ok)throw new Error("HTTP "+r.status);return r.json()};
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");
-  clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1800)}
+ clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),1900)}
 const MODE_NAMES=["安静模式","节能模式","性能模式","娱乐模式","安静增强"];
+const MODE_SHORT=["安静","节能","性能","娱乐","安静增强"];
 const FAN_MODES=["自动","最大","静音","x3","x4","Max Q","自定义","x7","无噪声","IFSC"];
 let STATUS=null;
-
-/* ---------- 导航 ---------- */
+/* ---------- 图标 ---------- */
+const ICO={
+system:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M9 20h6M12 16v4M7 9h4M7 12h7"/></svg>',
+kb:'<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="11" rx="1"/><path d="M5 10h1M8 10h1M11 10h1M14 10h1M17 10h2M5 13h1M8 13h1M11 13h1M14 13h1M17 13h2M7 15.5h10"/></svg>',
+fk:'<svg viewBox="0 0 24 24"><path d="M7 3h7a4 4 0 0 1 0 8H10v10H7z"/><path d="M10 7h4"/></svg>',
+ch:'<svg viewBox="0 0 24 24"><path d="M13 2 5 13h5l-1 9 8-11h-5z"/></svg>',
+cpu:'<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg>',
+gpu:'<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="1"/><circle cx="9" cy="12" r="3"/><path d="M16 9v6M19 9v6"/></svg>',
+bat:'<svg viewBox="0 0 24 24"><rect x="2" y="8" width="17" height="9" rx="1"/><path d="M21 11v3M6 11l3 0-1.5 3H10"/></svg>',
+en:'<svg viewBox="0 0 24 24"><path d="M6 20C6 11 12 5 20 4c0 9-5 15-14 16z"/><path d="M6 20c2-6 6-10 10-12"/></svg>',
+pf:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>'};
 const PAGES=[
- {id:"home",t:"主页",ico:"⌂"},
- {id:"mode",t:"电源模式",ico:"⚡"},
- {id:"pref",t:"偏好设置",ico:"⚙"},
- {id:"fan",t:"风扇控制",ico:"🌀"},
- {id:"kb",t:"键盘灯",ico:"⌨"},
- {id:"flexikey",t:"Flexikey",ico:"🔘"},
- {id:"cpu",t:"CPU 超频",ico:"🧠"},
- {id:"gpu",t:"GPU 超频",ico:"🎯"},
- {id:"bat",t:"电池",ico:"🔋"},
- {id:"energy",t:"节能计划",ico:"🌱"},
-];
-function nav(id){PAGES.forEach(p=>{const b=$("#nav-"+p.id);b&&b.classList.toggle("active",p.id===id)});
-  $$(".page").forEach(p=>p.classList.remove("active"));const pg=$("#page-"+id);pg&&pg.classList.add("active");
-  (PAGE_INIT[id]||(()=>{}))();}
-$("#nav").innerHTML=PAGES.map(p=>`<button id="nav-${p.id}" onclick="nav('${p.id}')">${p.t}</button>`).join("");
+ {id:"system",t:"系统监控",ico:ICO.system},
+ {id:"kb",t:"LED 设备",ico:ICO.kb},
+ {id:"flexikey",t:"FlexiKey",ico:ICO.fk},
+ {id:"charger",t:"FlexiCharger",ico:ICO.ch},
+ {id:"cpu",t:"CPU 超频",ico:ICO.cpu},
+ {id:"gpu",t:"GPU 超频",ico:ICO.gpu},
+ {id:"bat",t:"电池",ico:ICO.bat},
+ {id:"energy",t:"节能计划",ico:ICO.en},
+ {id:"pref",t:"偏好",ico:ICO.pf}];
+function nav(id){PAGES.forEach(p=>{const b=$("#nav-"+p.id);b&&b.classList.toggle("on",p.id===id)});
+ $$(".page").forEach(p=>p.classList.remove("on"));const pg=$("#page-"+id);pg&&pg.classList.add("on");
+ (PAGE_INIT[id]||(()=>{}))();}
+$("#nav").innerHTML=PAGES.map(p=>`<button id="nav-${p.id}" onclick="nav('${p.id}')" title="${p.t}">${p.ico}<span class="lbl">${p.t}</span></button>`).join("");
 window.nav=nav;
-
-/* ---------- 主页 ---------- */
-async function loadHome(){
- const st=await api("status");STATUS=st;
- $("#modeline").textContent=`${st.manufacturer||"—"} ${st.product||""} · BIOS ${st.bios||"—"} · `+
-   `CPU ${st.cpu||"—"} · ClevoID ${st.clevoID} · 客户 ${st.customerID}`;
- const s=st.support;
- const tiles=[
-  ["mode","⚡","电源模式","情境模式切换/涡轮风扇/DTT",s.powerMode],
-  ["fan","🌀","风扇转速控制","风扇模式/曲线/防尘",s.fan],
-  ["kb","⌨","键盘灯设置","RGB/亮度/灯效",st.kbType>0],
-  ["flexikey","🔘","Flexikey 宏键","宏键配置/过滤驱动开关",s.flexikey],
-  ["cpu","🧠","CPU 超频","PL1/PL2/倍频/电压",s.cpuoc],
-  ["gpu","🎯","GPU 超频","核心/显存偏移",s.gpuoc],
-  ["bat","🔋","电池工具","健康诊断/校准",s.battery],
-  ["energy","🌱","节能计划","功耗监控/充放电调度",s.energy],
- ];
- $("#page-home").innerHTML=`<div class="tiles">${tiles.map(t=>
-   `<div class="tile ${t[4]?"":"off"}" onclick="nav('${t[0]}')"><div class="ico">${t[1]}</div>
-    <div class="t">${t[2]}</div><div class="d">${t[3]}</div></div>`).join("")}</div>
-  <div class="card" style="margin-top:16px"><h3>系统信息</h3><div class="kv">
-   <b>键盘灯类型</b><span>${["无","白光","RGB 三区","每键 RGB","—","—","RGB15","—","","","","","","","","","","","","","","","","RGB15 自定义"][st.kbType]||st.kbType}</span>
-   <b>当前模式</b><span>${MODE_NAMES[st.mode]??st.mode}</span>
-   <b>界面语言</b><span>${st.language}</span>
-   <b>Turbo 风扇</b><span>${s.turboFan?"支持":"不支持"}</span>
-   <b>慢速风扇</b><span>${s.slowFan?"支持":"不支持"}</span>
-   <b>MS Hybrid 切换</b><span>${s.msHybrid?"支持":"不支持"}</span>
-   <b>AMD 手动模式</b><span>${s.amdRyzen?"支持":"不支持"}</span>
-   <b>Intel DTT</b><span>${s.dtt?"支持":"不支持"}</span>
-  </div></div>`;
-}
-
-/* ---------- 电源模式 ---------- */
-async function loadMode(){
- const st=await api("status");const s=st.support;
- const opts=await api("mode/options");
- const modes=[];
- if(s.powerMode){
-  if(st.mode!==undefined){/*OK*/}
-  const list=[];
-  const ver=s.powerMode;
-  list.push([0,"🌙","安静",ver]);
-  list.push([1,"🔋","节能",ver]);
-  list.push([2,"🚀","性能",ver]);
-  list.push([3,"🎮","娱乐",ver]);
-  if(s.quietPlus||st.mode===4)list.push([4,"🌌","安静增强",ver]);
-  modes.push(...list);
- }
- $("#page-mode").innerHTML=`
-  <div class="card"><h3>情境模式</h3>
-   <div class="modes">${modes.map(m=>`<div class="mode ${st.mode===m[0]?"sel":""}" onclick="setMode(${m[0]})">
-     <div class="ico">${m[1]}</div><div class="n">${m[2]}</div></div>`).join("")}</div>
-  </div>
-  <div class="grid g2" style="margin-top:14px">
-   <div class="card"><h3>性能选项</h3>
-    ${s.turboFan?`<div class="row"><label>涡轮风扇</label>
-      <label class="switch"><input type="checkbox" id="opt-turbo" ${opts.turboFan?"checked":""}
-        onchange="modeOpt('turboFan',this.checked)"><i></i></label></div>`:""}
-    <div class="row"><label>CPU 动态调节 (DTT)</label>
-      <label class="switch"><input type="checkbox" id="opt-dtt" ${opts.dtt?"checked":""}
-        onchange="modeOpt('dtt',this.checked)"><i></i></label></div>
-    ${s.slowFan?`<div class="row"><label>无噪声风扇</label>
-      <label class="switch"><input type="checkbox" ${opts.noiseless?"checked":""}
-        onchange="modeOpt('noiseless',this.checked)"><i></i></label></div>`:""}
-    ${opts.lowRefreshSupport?`<div class="row"><label>低刷新率省电</label>
-      <label class="switch"><input type="checkbox" ${opts.lowRefresh?"checked":""}
-        onchange="modeOpt('lowRefresh',this.checked)"><i></i></label></div>`:""}
-   </div>
-   <div class="card"><h3>说明</h3>
-    <div class="kv">
-     <b>切换通道</b><span>WMI 121/25 + Windows 电源计划 + 风扇/键盘灯联动</span>
-     <b>当前模式</b><span id="curmode">${MODE_NAMES[st.mode]??st.mode}</span>
-    </div>
-    <p class="hint">模式切换由引擎完成:EC 下发 → 电源计划 → GPU 联动 → 风扇联动 → 广播 clevofnkey^202。</p>
-   </div>
-  </div>`;
-}
-async function setMode(m){try{await api("mode",{mode:m});toast("已请求切换到 "+MODE_NAMES[m]);
-  setTimeout(()=>loadMode(),900);}catch(e){toast("切换失败:"+e.message)}}
-window.setMode=setMode;
-async function modeOpt(k,v){try{await api("mode/options",{key:k,value:v});toast("已下发")}catch(e){toast(e.message)}}
-window.modeOpt=modeOpt;
-
-/* ---------- 偏好设置 ---------- */
-async function loadPref(){
- const p=await api("preference");
- $("#page-pref").innerHTML=`
- <div class="grid g2">
-  <div class="card"><h3>FlexiCharger 充电保护</h3>
-   <div class="row"><label>启用</label>
-    <label class="switch"><input type="checkbox" id="fc-en" ${p.flexiCharger.enabled?"checked":""}><i></i></label></div>
-   <div class="row"><label>起始电量 %</label>
-    <select id="fc-start">${(p.flexiCharger.startTable.length?p.flexiCharger.startTable:[20,30,40,50,60,70,80,90,100]).map(v=>
-      `<option ${v===p.flexiCharger.start?"selected":""}>${v}</option>`).join("")}</select></div>
-   <div class="row"><label>停止电量 %</label>
-    <select id="fc-stop">${(p.flexiCharger.stopTable.length?p.flexiCharger.stopTable:[40,50,60,70,80,90,100]).map(v=>
-      `<option ${v===p.flexiCharger.stop?"selected":""}>${v}</option>`).join("")}</select></div>
-   <div class="row"><button class="act primary" onclick="saveFC()">应用</button></div>
-   <p class="hint">下发:WMI4 sub31 {31,enable,start,stop}</p>
-  </div>
-  <div class="card"><h3>键盘 Fn 键行为</h3>
-   <div class="row"><label>FnLock</label>
-    <label class="switch"><input type="checkbox" id="kb-fn" ${p.keyboard.fnLock?"checked":""}><i></i></label></div>
-   <div class="row"><label>Win 键启用</label>
-    <label class="switch"><input type="checkbox" id="kb-win" ${p.keyboard.winKey?"checked":""}><i></i></label></div>
-   <div class="row"><label>Win+Fn 切换</label>
-    <label class="switch"><input type="checkbox" id="kb-fnwin" ${p.keyboard.fnWin?"checked":""}><i></i></label></div>
-   <div class="row"><button class="act primary" onclick="saveKbPref()">应用</button></div>
-   <p class="hint">下发:WMI4 sub25(1=on,2=off 编码)</p>
-  </div>
-  <div class="card"><h3>显示</h3>
-   <div class="row"><label>蓝光过滤</label>
-    <input type="range" id="bl" min="0" max="10" step="1" value="${p.blueLight}"
-      oninput="$('#blv').textContent=(1+this.value/10).toFixed(1)">
-    <span class="val" id="blv">${(1+p.blueLight/10).toFixed(1)}</span></div>
-   <div class="row"><label>PgUp/PgDn 启用</label>
-    <label class="switch"><input type="checkbox" id="pg" ${p.pgUpDn?"checked":""}><i></i></label></div>
-   <div class="row"><button class="act primary" onclick="saveDisplay()">应用</button></div>
-   <p class="hint">蓝光:GDI Gamma Ramp;PgUpDn:WMI4 sub26</p>
-  </div>
-  <div class="card"><h3>GPU 模式切换(需重启)</h3>
-   <div class="row"><label>显示模式</label>
-    <select id="gpusw">
-     ${p.gpuSwitch.support&1?`<option value="1" ${p.gpuSwitch.current===1?"selected":""}>仅集成显卡</option>`:""}
-     ${p.gpuSwitch.support&2?`<option value="2" ${p.gpuSwitch.current===2?"selected":""}>仅独立显卡</option>`:""}
-     ${p.gpuSwitch.support&4?`<option value="3" ${p.gpuSwitch.current===3?"selected":""}>MS Hybrid</option>`:""}
-     ${p.gpuSwitch.support&8?`<option value="4" ${p.gpuSwitch.current===4?"selected":""}>动态切换</option>`:""}
-    </select>
-    <button class="act primary" onclick="saveGPU()">应用并重启</button></div>
-   <p class="hint">下发:WMI4 sub22 → shutdown -f -r -t 0</p>
-  </div>
-  <div class="card"><h3>界面语言</h3>
-   <div class="row"><select id="lang">${[
-     [0,"跟随系统"],[1,"English(US)"],[2,"English(GB)"],[3,"Español"],[4,"Deutsch"],[5,"Italiano"],
-     [6,"日本語"],[7,"한국어"],[8,"简体中文"],[9,"繁體中文"],[10,"Français"],[11,"Français(CA)"],
-     [12,"Português(BR)"],[13,"Português(PT)"],[14,"Türkçe"],[15,"ไทย"],[16,"Tiếng Việt"],[17,"Русский"],[18,"日本語(EP)"]]
-     .map(l=>`<option value="${l[0]}" ${p.language===l[0]?"selected":""}>${l[1]}</option>`).join("")}</select>
-    <button class="act primary" onclick="saveLang()">应用</button></div>
-   <p class="hint">写入 AppSettings(1,2) 并广播 clevofnkey^102</p>
-  </div>
- </div>`;
-}
-async function saveFC(){await api("preference",{flexiCharger:{enabled:$("#fc-en").checked,
-  start:+$("#fc-start").value,stop:+$("#fc-stop").value}});toast("FlexiCharger 已下发")}
-async function saveKbPref(){await api("preference",{keyboard:{fnLock:$("#kb-fn").checked,
-  winKey:$("#kb-win").checked,fnWin:$("#kb-fnwin").checked}});toast("键盘设置已下发")}
-async function saveDisplay(){await api("preference",{blueLight:+$("#bl").value,pgUpDn:$("#pg").checked});toast("显示设置已应用")}
-async function saveGPU(){if(!confirm("切换 GPU 模式将立即重启,继续?"))return;
- await api("preference",{gpuSwitch:+$("#gpusw").value});toast("已下发,即将重启")}
-async function saveLang(){await api("preference",{language:+$("#lang").value});toast("语言已切换")}
-window.saveFC=saveFC;window.saveKbPref=saveKbPref;window.saveDisplay=saveDisplay;
-window.saveGPU=saveGPU;window.saveLang=saveLang;
-
-/* ---------- 风扇 ---------- */
+$("#sideToggle").onclick=()=>$("#side").classList.toggle("min");
+$("#btnFull").onclick=()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()};
+$("#btnClose").onclick=()=>window.close();
+$("#btnInfo").onclick=()=>{const s=STATUS||{};toast(`${s.manufacturer||""} ${s.product||""} · BIOS ${s.bios||"—"} · ClevoID ${s.clevoID||"—"}`)};
+function panel(title,html){return `<section class="panel"><i class="cnr c1"></i><i class="cnr c2"></i><i class="cnr c3"></i><i class="cnr c4"></i><h3>${title}</h3>${html}</section>`}
+/* ---------- 仪表盘 ---------- */
+function drawDial(cv,val,max,o={}){
+ const c=cv.getContext("2d"),W=cv.width,H=cv.height,cx=W/2,cy=H/2,R=Math.min(W,H)/2-8;
+ c.clearRect(0,0,W,H);
+ const a0=Math.PI*0.75,a1=Math.PI*2.25,N=o.ticks||50;
+ c.strokeStyle="#333c45";c.lineWidth=1;
+ for(let i=0;i<=N;i++){const a=a0+(a1-a0)*i/N,long=i%(N/5)===0,l=long?9:4;
+  c.beginPath();c.moveTo(cx+Math.cos(a)*(R-l),cy+Math.sin(a)*(R-l));c.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);c.stroke();}
+ if(o.labels){c.fillStyle="#8a949e";c.font="600 12px Segoe UI";c.textAlign="center";c.textBaseline="middle";
+  o.labels.forEach((t,i)=>{const a=a0+(a1-a0)*i/(o.labels.length-1);
+   c.fillText(t,cx+Math.cos(a)*(R-22),cy+Math.sin(a)*(R-22))});}
+ const p=Math.max(0,Math.min(1,(val||0)/max));
+ c.strokeStyle=o.color||"#25c8ff";c.lineWidth=3;c.shadowColor=o.color||"#25c8ff";c.shadowBlur=12;
+ c.beginPath();c.arc(cx,cy,R-13,a0,a0+(a1-a0)*p);c.stroke();c.shadowBlur=0;
+ const an=a0+(a1-a0)*p;
+ c.strokeStyle="#e8eef2";c.lineWidth=2;c.shadowColor="#25c8ff";c.shadowBlur=6;
+ c.beginPath();c.moveTo(cx-Math.cos(an)*12,cy-Math.sin(an)*12);c.lineTo(cx+Math.cos(an)*(R-18),cy+Math.sin(an)*(R-18));c.stroke();
+ c.shadowBlur=0;c.fillStyle="#050708";c.beginPath();c.arc(cx,cy,7,0,7);c.fill();
+ c.strokeStyle="#25c8ff";c.lineWidth=1.5;c.beginPath();c.arc(cx,cy,7,0,7);c.stroke();
+ if(o.center){c.fillStyle="#cfd6dc";c.font="600 14px Segoe UI";c.textAlign="center";c.fillText(o.center,cx,cy+R*0.62)}}
+/* ---------- 键盘图 ---------- */
+const KB_ROWS=[
+[["Esc",1.3],["F1",1],["F2",1],["F3",1],["F4",1],["F5",1],["F6",1],["F7",1],["F8",1],["F9",1],["F10",1],["F11",1],["F12",1],["PrtSc",1],["Ins",1],["Del",1]],
+[["~",1],["1",1],["2",1],["3",1],["4",1],["5",1],["6",1],["7",1],["8",1],["9",1],["0",1],["-",1],["=",1],["",1.8],["NumLK",1.2],["/",0.8],["*",0.8]],
+[["Tab",1.5],["Q",1],["W",1],["E",1],["R",1],["T",1],["Y",1],["U",1],["I",1],["O",1],["P",1],["[",1],["]",1],["\\",1],["7",0.8],["8",0.8],["9",0.8]],
+[["Caps",1.8],["A",1],["S",1],["D",1],["F",1],["G",1],["H",1],["J",1],["K",1],["L",1],[";",1],["'",1],["↵",1.9],["4",0.8],["5",0.8],["6",0.8]],
+[["Shift",2.3],["Z",1],["X",1],["C",1],["V",1],["B",1],["N",1],["M",1],[",",1],[".",1],["/",1],["Shift",1.9],["1",0.8],["2",0.8],["3",0.8]],
+[["Ctrl",1.3],["Fn",1.1],["Win",1.2],["Alt",1.2],["",4.6],["Alt",1.2],["Menu",1.2],["Ctrl",1.3],["←",0.9],["↓",0.9],["→",0.9]]];
+function kbHTML(zc){
+ return `<div class="kb">`+KB_ROWS.map((row,ri)=>`<div class="kbrow">`+row.map((k,ci)=>{
+  let col=null;
+  if(zc&&ri>=1&&ri<=4){col=ci<=5?zc.left:ci<=10?zc.mid:zc.right}
+  const st=col?`box-shadow:0 0 11px ${col}55,inset 0 -3px 8px ${col}33;border-color:${col}77`:"";
+  return `<div class="key${col?" glow":""}" style="flex:${k[1]};${st}">${k[0]}</div>`}).join("")+`</div>`).join("")+`</div>`}
+const rgbHex=c=>`#${[c.r,c.g,c.b].map(v=>v.toString(16).padStart(2,"0")).join("")}`;
+/* ================= 系统监控 ================= */
 let fanTimer=null;
-async function loadFan(){
- const cfg=await api("fan/config");
- const tbl=await api("fan/table");
- const t=tbl.tables;
- $("#page-fan").innerHTML=`
- <div class="grid g2">
-  <div class="card"><h3>实时监控(2 秒刷新)</h3>
-   <div class="grid g3" id="fangauges"></div></div>
-  <div class="card"><h3>风扇模式</h3>
-   <div class="row"><select id="fanmode">${FAN_MODES.map((m,i)=>
-     `<option value="${i}" ${cfg.mode===i?"selected":""}>${m}</option>`).join("")}</select>
-    <button class="act primary" onclick="setFanMode()">应用</button></div>
-   <div class="row"><label>自动偏移</label>
-    <input type="range" id="fanoff" min="0" max="100" value="${cfg.offset}"
-      oninput="$('#fanoffv').textContent=this.value+'%'">
-    <span class="val" id="fanoffv">${cfg.offset}%</span></div>
-   <div class="row"><button class="act" onclick="setFanOffset()">应用偏移</button></div>
-   <div class="row"><label>防尘</label>
-    <button class="act" onclick="antiDust('run')">立即除尘</button></div>
+async function loadSystem(){
+ const st=await api("status");STATUS=st;
+ $("#modeline").textContent=`${st.manufacturer||"—"} ${st.product||""} · BIOS ${st.bios||"—"} · ${st.cpu||"—"} · ClevoID ${st.clevoID} · 客户 ${st.customerID}`;
+ const mo=await api("mode");const opts=await api("mode/options");
+ const fc=await api("fan/config");const tbl=(await api("fan/table")).tables;
+ const ad=await api("fan/antidust");const pref=await api("preference");
+ const g=await api("gpu/oc");
+ $("#page-system").innerHTML=`
+ <div class="tabrow" id="modetabs">${MODE_SHORT.map((m,i)=>
+  `<button class="tab ${mo.mode===i?"on":""}" onclick="setMode(${i})"><span>${m}</span></button>`).join("")}</div>
+ <div class="grid" style="grid-template-columns:minmax(340px,5fr) minmax(320px,4fr);gap:16px;align-items:start">
+  <div>
+   <div style="position:relative">
+    <canvas class="dial" id="cpudial" width="330" height="300"></canvas>
+   </div>
+   <div class="stat3" style="margin-top:4px">
+    <div><div class="bignum" id="s-mhz">—</div><div class="unit">MHz · 时序</div></div>
+    <div class="c"><div class="bignum" id="s-util" style="font-size:30px">—</div><div class="unit">利用率</div></div>
+    <div style="text-align:right"><div class="bignum" id="s-temp">—</div><div class="unit">℃ · 温度</div></div>
+   </div>
+   <div class="tabrow" style="margin-top:18px" id="fantabs">${[0,1,6,3,5].map(i=>
+     `<button class="tab sm ${fc.mode===i?"on":""}" data-fm="${i}" onclick="setFanMode(${i})"><span>${FAN_MODES[i]}</span></button>`).join("")}
+    <label class="row" style="margin:0"><span class="sw"><input type="checkbox" id="opt-noise" ${opts.noiseless?"checked":""} onchange="modeOpt('noiseless',this.checked)"><i></i></span><span style="color:var(--dim);font-size:13px">寂靜模式</span></label>
+   </div>
+   <div class="hint" style="text-align:center">风扇转速控制 · WMI 121/1 + 偏移 ${fc.offset}%</div>
+   ${panel("风扇转速控制",`
+    <div class="row"><label class="k">自动偏移</label><span class="val" id="fanoffv">${fc.offset}%</span></div>
+    <input type="range" id="fanoff" min="0" max="100" value="${fc.offset}" oninput="$('#fanoffv').textContent=this.value+'%'" onchange="setFanOffset()">
+    <div class="row"><button class="act" onclick="antiDust('run')"><span>立即除尘</span></button>
+     <button class="act" onclick="antiDustSched()"><span>除尘计划</span></button>
+     <span class="badge">${ad.enabled?"计划:"+ad.days+"天/"+ad.hour+"时":"无计划"}${ad.running?" · 运行中":""}</span></div>
+    <div class="grid g3" style="margin-top:10px">
+     ${["CPU","GPU1","GPU2"].map((n,i)=>`<div><div class="unit">${n} 曲线(温度℃/转速%)</div>
+      ${[0,1,2].map(j=>`<div class="row" style="margin:4px 0"><input type="number" id="t${i}${j}" value="${tbl[i]["t"+(j+1)]}" min="35" max="100" style="width:62px">
+       <input type="number" id="d${i}${j}" value="${tbl[i]["d"+(j+1)]}" min="0" max="100" style="width:62px"></div>`).join("")}</div>`).join("")}
+    </div>
+    <div class="row"><button class="act pri" onclick="saveFanTable()"><span>保存并启用自定义曲线</span></button>
+     <button class="act" onclick="resetFanTable()"><span>恢复默认曲线</span></button></div>`)}
   </div>
- </div>
- <div class="grid g3" style="margin-top:14px">
-  ${["CPU 风扇","GPU1 风扇","GPU2 风扇"].map((n,i)=>`
-  <div class="card"><h3>${n}曲线(自定义)</h3>
-   ${["T1","T2","T3"].map((k,j)=>`<div class="row"><label>${["温度①","温度②","温度③"][j]} ℃</label>
-     <input type="number" id="t${i}${j}" value="${t[i]["t"+(j+1)]}" min="35" max="100"></div>`).join("")}
-   ${["D1","D2","D3"].map((k,j)=>`<div class="row"><label>${["转速①","转速②","转速③"][j]} %</label>
-     <input type="number" id="d${i}${j}" value="${t[i]["d"+(j+1)]}" min="0" max="100"></div>`).join("")}
-  </div>`).join("")}
- </div>
- <div class="row" style="margin-top:12px">
-  <button class="act primary" onclick="saveFanTable()">保存并启用自定义曲线</button>
-  <button class="act" onclick="resetFanTable()">恢复默认曲线</button>
+  <div>
+   ${panel("系统资讯",`<div class="kv">
+     <b>CPU</b><span>${st.cpu||"—"}</span>
+     <b>核心</b><span>${st.cores||"—"}</span>
+     <b>产品</b><span>${st.manufacturer||""} ${st.product||""}</span>
+     <b>BIOS</b><span>${st.bios||"—"}</span>
+     <b>键盘灯</b><span>${["无","白光","RGB 三区","每键 RGB","","","RGB15","","","","","","","","","","","","","","","","","","","RGB15 自定义"][st.kbType]||st.kbType}</span>
+     <b>语言</b><span>${st.language}</span></div>`)}
+   ${panel("风扇转速",`<div class="grid g2" style="gap:10px">
+     <div style="text-align:center"><canvas class="dial" id="fan-cpu" width="150" height="140"></canvas>
+       <div class="unit" id="fan-cpu-t">CPU 风扇 — RPM</div></div>
+     <div style="text-align:center"><canvas class="dial" id="fan-gpu" width="150" height="140"></canvas>
+       <div class="unit" id="fan-gpu-t">GPU 风扇 — RPM</div></div></div>`)}
+   ${panel("GPU 资讯",`<div class="kv">
+     <b>时序</b><span>${g.baseClock||0} MHz <span class="bar cy" style="display:block;margin-top:4px"><i id="gpu-clk-b" style="width:0%"></i></span></span>
+     <b>温度</b><span id="gpu-temp">— ℃ <span class="bar" style="display:block;margin-top:4px"><i id="gpu-temp-b" style="width:0%"></i></span></span>
+     <b>利用率</b><span id="gpu-util">— % <span class="bar" style="display:block;margin-top:4px"><i id="gpu-util-b" style="width:0%"></i></span></span>
+     <b>NVAPI</b><span>${g.ready?"就绪":"未就绪"} · ${g.driver||"—"}</span></div>`)}
+   ${panel("偏好",`<div class="tiles">
+     <button class="tile ${pref.keyboard.winKey?"on":""}" id="tl-win" onclick="tgPref('winKey')">${ICO.pf.replace("12","12")}<span>Win 键锁</span></button>
+     <button class="tile ${pref.keyboard.fnWin?"on":""}" id="tl-fnwin" onclick="tgPref('fnWin')">${ICO.fk}<span>Win-Fn 交换</span></button>
+     <button class="tile ${pref.keyboard.fnLock?"on":""}" id="tl-fnlock" onclick="tgPref('fnLock')">${ICO.kb}<span>Fn 键锁</span></button>
+     <button class="tile ${opts.turboFan?"on":""}" id="tl-turbo" onclick="modeOpt('turboFan',${opts.turboFan?"false":"true"})">${ICO.fan||ICO.en}<span>涡轮风扇</span></button>
+     <button class="tile ${opts.dtt?"on":""}" id="tl-dtt" onclick="modeOpt('dtt',${opts.dtt?"false":"true"})">${ICO.cpu}<span>CPU DTT</span></button>
+     <button class="tile ${opts.lowRefresh?"on":""}" id="tl-low" onclick="modeOpt('lowRefresh',${opts.lowRefresh?"false":"true"})">${ICO.system}<span>低刷新率</span></button>
+    </div>`)}
+   ${panel("配置",`
+     <div class="row"><label class="k">蓝光滤镜</label><span class="val" id="blv">${pref.blueLight}</span><span class="unit">/10</span></div>
+     <input type="range" id="bl" min="0" max="10" step="1" value="${pref.blueLight}" oninput="$('#blv').textContent=this.value" onchange="saveBlueLight(+this.value)">
+     <div class="row"><label class="k">GPU 模式</label><span class="badge">${["","仅集显","仅独显","MS Hybrid","动态"][pref.gpuSwitch.current]||pref.gpuSwitch.current}</span>
+      <button class="act" onclick="nav('pref')"><span>切换…</span></button></div>`)}
+  </div>
  </div>`;
  if(fanTimer)clearInterval(fanTimer);
- const tick=async()=>{try{const l=await api("fan/live");
-  const g=[["CPU",l.cpu],["GPU1",l.gpu1],["GPU2",l.gpu2],["SYS",l.sys]];
-  $("#fangauges").innerHTML=g.map(x=>`<div class="gauge">
-    <div class="num">${x[1].temp??0}°C</div><div class="lbl">${x[0]} ${x[1].rpm} RPM / ${x[1].duty}%</div>
-    <div class="bar"><i style="width:${Math.min(100,x[1].duty)}%"></i></div></div>`).join("");
+ const tick=async()=>{try{
+   const l=await api("fan/live");const ci=await api("cpu/info");
+   const util=ci.info.CPUUtil||0,mhz=ci.info.CPUMHz||0;
+   drawDial($("#cpudial"),util,100,{ticks:50,labels:["0","20","40","60","80","100"],center:"CPU"});
+   $("#s-util").textContent=util?util+"%":"—";
+   $("#s-mhz").textContent=mhz||"—";
+   $("#s-temp").textContent=l.cpu.temp||"—";
+   drawDial($("#fan-cpu"),l.cpu.duty,100,{ticks:30,color:"#c8ff00",center:l.cpu.duty+"%"});
+   drawDial($("#fan-gpu"),l.gpu1.duty,100,{ticks:30,color:"#c8ff00",center:l.gpu1.duty+"%"});
+   $("#fan-cpu-t").textContent=`CPU 风扇 ${l.cpu.rpm} RPM`;
+   $("#fan-gpu-t").textContent=`GPU 风扇 ${l.gpu1.rpm} RPM`;
+   $("#gpu-temp").innerHTML=`${l.gpu1.temp} ℃ <span class="bar" style="display:block;margin-top:4px"><i style="width:${Math.min(100,l.gpu1.temp)}%"></i></span>`;
+   $("#gpu-util").innerHTML=`${l.gpu1.duty} % <span class="bar" style="display:block;margin-top:4px"><i style="width:${l.gpu1.duty}%"></i></span>`;
+   $("#gpu-clk-b").style.width=Math.min(100,(g.baseClock||0)/30)+"%";
  }catch(e){}};
- tick();fanTimer=setInterval(tick,2000);
-}
-async function setFanMode(){await api("fan/config",{mode:+$("#fanmode").value});toast("风扇模式已下发")}
-async function setFanOffset(){await api("fan/config",{offset:+$("#fanoff").value});toast("偏移已下发")}
-async function antiDust(a){await api("fan/antidust",{action:a});toast("除尘已启动")}
+ tick();fanTimer=setInterval(tick,2000);}
+async function setMode(m){try{await api("mode",{mode:m});toast("已请求切换到 "+MODE_NAMES[m]);setTimeout(loadSystem,900)}catch(e){toast("切换失败:"+e.message)}}
+window.setMode=setMode;
+async function setFanMode(m){try{await api("fan/config",{mode:m});toast("风扇模式:"+FAN_MODES[m]);
+ $$("#fantabs .tab").forEach(b=>b.classList.toggle("on",+b.dataset.fm===m))}catch(e){toast(e.message)}}
+window.setFanMode=setFanMode;
+async function modeOpt(k,v){try{await api("mode/options",{key:k,value:v});toast("已下发");}catch(e){toast(e.message)}setTimeout(loadSystem,400)}
+window.modeOpt=modeOpt;
+async function tgPref(key){try{const p=await api("preference");const cur=p.keyboard[key];
+ await api("preference",{keyboard:{[key]:!cur}});toast((key==="winKey"?"Win 键":key==="fnWin"?"Win-Fn 交换":"Fn 键锁")+(cur?"禁用":"启用"));}catch(e){toast(e.message)}setTimeout(loadSystem,400)}
+window.tgPref=tgPref;
+async function saveBlueLight(v){try{await api("preference",{blueLight:v});toast("蓝光过滤 "+v+" 档")}catch(e){toast(e.message)}}
+window.saveBlueLight=saveBlueLight;
+async function setFanOffset(){try{await api("fan/config",{offset:+$("#fanoff").value});toast("偏移已下发")}catch(e){toast(e.message)}}
+window.setFanOffset=setFanOffset;
+async function antiDust(a){try{await api("fan/antidust",{action:a});toast("除尘已启动")}catch(e){toast(e.message)}}
+window.antiDust=antiDust;
+async function antiDustSched(){const days=prompt("除尘周期(天,0=停用)","7");if(days===null)return;
+ const hour=prompt("执行小时(0-23)","3");if(hour===null)return;
+ const resume=confirm("睡眠唤醒后也执行一次?");
+ try{await api("fan/antidust",{action:"schedule",days:+days,hour:+hour,resume});toast("除尘计划已下发")}catch(e){toast(e.message)}}
+window.antiDustSched=antiDustSched;
 async function saveFanTable(){const tables=[0,1,2].map(i=>({T1:+$("#t"+i+"0").value,T2:+$("#t"+i+"1").value,
-  T3:+$("#t"+i+"2").value,D1:+$("#d"+i+"0").value,D2:+$("#d"+i+"1").value,D3:+$("#d"+i+"2").value}));
+ T3:+$("#t"+i+"2").value,D1:+$("#d"+i+"0").value,D2:+$("#d"+i+"1").value,D3:+$("#d"+i+"2").value}));
  await api("fan/table",{tables});toast("自定义曲线已下发")}
-async function resetFanTable(){await api("fan/table",{reset:true});toast("已恢复 EC 默认曲线")}
-window.setFanMode=setFanMode;window.setFanOffset=setFanOffset;window.antiDust=antiDust;
-window.saveFanTable=saveFanTable;window.resetFanTable=resetFanTable;
-
-/* ---------- 键盘灯 ---------- */
+window.saveFanTable=saveFanTable;
+async function resetFanTable(){await api("fan/table",{reset:true});toast("已恢复 EC 默认曲线");loadSystem()}
+window.resetFanTable=resetFanTable;
+/* ================= LED 设备 ================= */
 async function loadKB(){
- const s=await api("kb/state");
- const t=s.type;
- const KBTYPE=["无 LED","白光","RGB 三区","每键 RGB","","","RGB15 色","","","","","","","","","","","","","","","","RGB15 自定义"][t]||t;
+ const s=await api("kb/state");const t=s.type;
+ const zc=t>1?{left:rgbHex(s.leftColor),mid:rgbHex(s.midColor),right:rgbHex(s.rightColor)}:null;
  const effects=[[0,"随机"],[2,"呼吸"],[3,"循环"],[4,"波浪"],[5,"舞蹈"],[6,"节拍"],[7,"闪烁"]];
  $("#page-kb").innerHTML=`
- <div class="grid g2">
-  <div class="card"><h3>总控(${KBTYPE})</h3>
-   <div class="row"><label>灯光开关</label>
-    <label class="switch"><input type="checkbox" id="kb-on" ${s.on?"checked":""}
-      onchange="kbCmd('onoff',{mode:this.checked?1:0})"><i></i></label></div>
-   <div class="row"><label>亮度(0-4)</label>
-    <input type="range" id="kb-br" min="0" max="4" value="${s.brightness}"
-      oninput="$('#kb-brv').textContent=this.value">
-    <span class="val" id="kb-brv">${s.brightness}</span>
-    <button class="act" onclick="kbCmd('brightness',{level:+$('#kb-br').value})">应用</button></div>
-   <div class="row"><label>睡眠定时</label>
-    <label class="switch"><input type="checkbox" id="kb-slp" ${s.sleepTrigger?"checked":""}><i></i></label>
-    <input type="number" id="kb-slps" min="5" max="7200" value="${s.sleepSeconds||30}" style="width:90px"> 秒
-    <button class="act" onclick="kbCmd('sleep',{mode:$('#kb-slp').checked?1:0,seconds:+$('#kb-slps').value})">应用</button></div>
-   <div class="row"><label>开机保留灯效</label>
-    <label class="switch"><input type="checkbox" ${s.overrideBoot?"checked":""}
-      onchange="kbCmd('override',{override:this.checked?1:0})"><i></i></label></div>
-   <div class="row"><button class="act" onclick="kbCmd('reset',{})">恢复默认</button></div>
+ <div class="grid" style="grid-template-columns:minmax(300px,4fr) minmax(340px,5fr);gap:16px;align-items:start">
+  <div>
+   ${panel("键盘睡眠计时器",`
+    <div class="row"><label class="k">状态</label>
+     <button class="act ${s.sleepTrigger?"":"pri"}" onclick="kbSleep(0)"><span>禁用</span></button>
+     <button class="act ${s.sleepTrigger?"pri":""}" onclick="kbSleep(1)"><span>启用</span></button></div>
+    <div class="row"><label class="k">时 / 分 / 秒</label>
+     <input type="number" id="sl-h" value="0" min="0" max="2" style="width:70px"> :
+     <input type="number" id="sl-m" value="0" min="0" max="59" style="width:70px"> :
+     <input type="number" id="sl-s" value="${s.sleepSeconds||30}" min="0" max="59" style="width:70px"></div>
+    <div class="row"><label class="k">覆盖引导效果</label>
+     <span class="sw"><input type="checkbox" id="kb-ovr" ${s.overrideBoot?"checked":""} onchange="kbCmd('override',{override:this.checked?1:0})"><i></i></span></div>`)}
+   ${panel("彩色背光",`
+    <div class="wheelbox"><div class="halo"></div><div class="wheel" id="wheel"></div>
+     <div class="wheelc"><span id="zone-name">整键盘</span><span class="unit" id="zone-hex"></span></div></div>
+    <div class="row" style="justify-content:center;margin-top:14px">
+     <select id="kb-part" onchange="$('#zone-name').textContent=this.selectedOptions[0].textContent">
+      <option value="all">整键盘</option><option value="left">左区</option><option value="mid">中区</option>
+      <option value="right">右区</option><option value="tp">触摸板</option><option value="logo">Logo</option>
+      <option value="lightbar">灯带</option></select></div>
+    <div class="row"><label class="k">亮度</label><span class="unit">OFF</span>
+     <input type="range" class="cy" id="kb-br" min="0" max="4" value="${s.brightness}" oninput="$('#kb-brv').textContent=this.value" onchange="kbCmd('brightness',{level:+this.value})" style="flex:1">
+     <span class="val" id="kb-brv">${s.brightness}</span><span class="unit">4</span></div>
+    <div class="row"><label class="k">灯效</label>
+     <select id="kb-eff">${effects.map(e=>`<option value="${e[0]}" ${s.mode===e[0]?"selected":""}>${e[1]}</option>`).join("")}</select>
+     <button class="act pri" onclick="kbEffect()"><span>应用灯效</span></button>
+     <button class="act" onclick="kbCmd('reset',{})"><span>恢复默认</span></button></div>
+    <div class="hint">点击色环取色并下发到所选分区(WMI 103 · 0xF0-0xF6)。</div>`)}
   </div>
-  ${t===1?`<div class="card"><h3>白光亮度</h3>
-    <p class="hint">白光键盘仅有亮度控制(WMI 39)。</p></div>`:`
-  <div class="card"><h3>颜色(WMI 103 分区)</h3>
-   <div class="row"><label>区域</label>
-    <select id="kb-part">
-     <option value="all">整键盘</option><option value="left">左区</option>
-     <option value="mid">中区</option><option value="right">右区</option>
-     <option value="tp">触摸板</option><option value="logo">Logo</option>
-     <option value="lightbar">灯带</option></select></div>
-   <div class="row"><label>R</label><input type="number" id="kb-r" min="0" max="255" value="255">
-    <label>G</label><input type="number" id="kb-g" min="0" max="255" value="0">
-    <label>B</label><input type="number" id="kb-b" min="0" max="255" value="0"></div>
-   <div class="row"><button class="act primary" onclick="setKBColor()">应用颜色</button></div>
-   <div class="row" style="margin-top:10px"><label>灯效</label>
-    <select id="kb-eff">${effects.map(e=>`<option value="${e[0]}" ${s.mode===e[0]?"selected":""}>${e[1]}</option>`).join("")}</select>
-    <button class="act blue" onclick="kbCmd('effect',{effect:+$('#kb-eff').value,
-      r:+$('#kb-r').value,g:+$('#kb-g').value,b:+$('#kb-b').value})">应用灯效</button></div>
-   <p class="hint">命令字:0xE0 开关位图 / 0xF4 亮度 / 0xF0-0xF6 分区色 / 模式常量。</p>
-  </div>`}
+  <div>${panel("LED 键盘",kbHTML(zc)+`
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+     <span class="unit">${["无 LED","白光","RGB 三区","每键 RGB","","","RGB15 色","","","","","","","","","","","","","","","","","","","RGB15 自定义"][t]||t}</span>
+     <label class="row" style="margin:0"><span class="sw"><input type="checkbox" id="kb-on" ${s.on?"checked":""} onchange="kbCmd('onoff',{mode:this.checked?1:0})"><i></i></span><span style="color:var(--dim)">灯光开关</span></label>
+    </div>`)}
+  </div>
+ </div>`;
+ const wheel=$("#wheel");
+ wheel.onclick=e=>{const r=wheel.getBoundingClientRect();
+  const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;
+  let ang=Math.atan2(y,x)*180/Math.PI+90;if(ang<0)ang+=360;
+  const [rr,gg,bb]=hsl2rgb(ang/360,1,.5);
+  $("#zone-hex").textContent=`rgb(${rr},${gg},${bb})`;
+  kbCmd("color",{part:$("#kb-part").value,r:rr,g:gg,b:bb});};
+}
+function hsl2rgb(h,s,l){const f=n=>{const k=(n+h*12)%12,a=s*Math.min(l,1-l);
+ return Math.round(255*(l-a*Math.max(-1,Math.min(k-3,9-k,1))))};return [f(0),f(8),f(4)]}
+async function kbCmd(cmd,p){try{await api("kb/cmd",Object.assign({cmd},p));toast("已下发")}catch(e){toast(e.message)}}
+window.kbCmd=kbCmd;
+async function kbEffect(){await kbCmd("effect",{effect:+$("#kb-eff").value})}
+window.kbEffect=kbEffect;
+async function kbSleep(on){const sec=+$("#sl-s").value+ +$("#sl-m").value*60+ +$("#sl-h").value*3600;
+ await kbCmd("sleep",{mode:on,seconds:on?Math.max(5,sec):0});loadKB()}
+window.kbSleep=kbSleep;
+/* ================= FlexiKey ================= */
+async function loadFlexikey(){
+ const f=await api("flexikey/state");
+ $("#page-flexikey").innerHTML=`
+ <div class="tabrow"><button class="tab y on"><span>键盘宏</span></button><button class="tab y" onclick="toast('统计:驱动日志接口已封装,UI 待开放')"><span>统计</span></button><button class="tab y" onclick="toast('鼠标宏:配置经 profile.xml 的 Device=2 槽位管理')"><span>鼠标宏</span></button></div>
+ <div class="grid" style="grid-template-columns:minmax(280px,4fr) minmax(340px,5fr);gap:16px;align-items:start">
+  <div>${panel("配置档",`
+   <div class="row" style="justify-content:center;gap:10px">${f.profiles.map(p=>
+    `<button class="act ${p.selected?"warn":""}" onclick="fkSelect('${p.name}')"><span>${p.name}</span></button>`).join("")}</div>
+   <div class="hint" style="text-align:center">文件:${f.exists?"C:\\ComboKey\\profile.xml":"未创建(应用后生成)"} · 与原版 CC.exe 格式兼容</div>
+   <div style="margin-top:16px;text-align:center">
+    <div style="display:inline-flex;gap:10px;align-items:center;border:1px solid #2c343c;padding:10px 18px">
+     <b style="font-size:18px">FN</b><span class="unit">+</span><b style="font-size:18px">Backspace ⌫</b></div>
+    <div class="hint">使用 Fn+Backspace 启用或禁用 Flexikey</div></div>
+   <div class="row" style="justify-content:center;margin-top:16px">
+    <button class="act" onclick="fkDisable()"><span>禁用</span></button>
+    <button class="act pri" onclick="fkApply()"><span>启用/应用</span></button></div>
+   <div class="row" style="justify-content:center"><span class="badge ${f.kbEnabled?"ok":""}">键盘过滤 ${f.kbEnabled?"开":"关"}</span>
+    <span class="badge ${f.mouseEnabled?"ok":""}">鼠标过滤 ${f.mouseEnabled?"开":"关"}</span></div>`)}
+  </div>
+  <div>${panel("键盘宏槽位",kbHTML(null)+`
+   <div class="hint">宏键明细编辑请直接修改 profile.xml(键位/宏序列/文本宏/启动程序),此处选择配置档并下发到 HKFltr 过滤驱动。</div>`)}
+  </div>
  </div>`;
 }
-async function kbCmd(cmd,p){try{await api("kb/cmd",Object.assign({cmd},p));toast("已下发")}catch(e){toast(e.message)}}
-async function setKBColor(){await kbCmd("color",{part:$("#kb-part").value,
-  r:+$("#kb-r").value,g:+$("#kb-g").value,b:+$("#kb-b").value})}
-window.kbCmd=kbCmd;window.setKBColor=setKBColor;
-
-/* ---------- CPU 超频 ---------- */
+async function fkSelect(name){try{await api("flexikey/apply",{action:"select",name});toast("已选中 "+name);loadFlexikey()}catch(e){toast(e.message)}}
+window.fkSelect=fkSelect;
+async function fkApply(){try{await api("flexikey/apply",{action:"apply"});toast("宏键配置已应用");loadFlexikey()}catch(e){toast("应用失败:"+e.message)}}
+window.fkApply=fkApply;
+async function fkDisable(){try{await api("flexikey/apply",{action:"disable"});toast("已停用宏键");loadFlexikey()}catch(e){toast(e.message)}}
+window.fkDisable=fkDisable;
+/* ================= FlexiCharger ================= */
+async function loadCharger(){
+ const p=await api("preference");const b=await api("battery");
+ const fc=p.flexiCharger;const en=fc.enabled;
+ const mode=!en?0:(fc.start===70&&fc.stop===80?1:2);
+ const pct=b.data.capacityPct||0;const hasBat=b.data.design>0;
+ $("#page-charger").innerHTML=`
+ <div class="grid" style="grid-template-columns:minmax(320px,5fr) minmax(300px,4fr);gap:16px;align-items:start">
+  <div>${panel("电池充电选项",`
+   <div class="row"><label class="k" style="min-width:0"><input type="radio" name="fcm" ${mode===0?"checked":""} onchange="fcMode(0)"> 最大电池电量</label>
+    <span class="unit">持续将电池充电至 100%</span></div>
+   <div class="row"><label class="k" style="min-width:0"><input type="radio" name="fcm" ${mode===1?"checked":""} onchange="fcMode(1)"> 推荐电池充电</label>
+    <span class="unit">低于 70% 充电,80% 停止</span></div>
+   <div class="row"><label class="k" style="min-width:0"><input type="radio" name="fcm" ${mode===2?"checked":""} onchange="fcMode(2)"> 自定义电池充电</label>
+    <span class="unit">设置启动和停止充电阈值</span></div>
+   <div class="grid g2" style="margin-top:14px">
+    <div><div class="unit">容量不足时开始充电</div><div class="bignum" style="color:var(--lime);font-size:34px" id="fc-s">${fc.start}</div>
+     <input type="range" min="40" max="95" value="${fc.start}" id="fc-start" oninput="$('#fc-s').textContent=this.value"></div>
+    <div><div class="unit">容量达到时停止充电</div><div class="bignum" style="color:var(--lime);font-size:34px" id="fc-p">${fc.stop}</div>
+     <input type="range" min="60" max="100" value="${fc.stop}" id="fc-stop" oninput="$('#fc-p').textContent=this.value"></div>
+   </div>
+   <div class="row" style="margin-top:10px"><button class="act pri" onclick="fcApply()"><span>应用</span></button>
+    <span class="hint">下发:WMI4 sub31 {31,enable,start,stop}</span></div>`)}
+  </div>
+  <div>${panel("电池状态",`
+   <div class="plug">${hasBat?"⌁ 已插入电源":"— 本机无电池管理支持位 —"}</div>
+   <div class="batt"><div class="fill" style="width:${Math.max(4,pct)}%"></div><div class="pct">${hasBat?pct+" %":"—"}</div></div>
+   <div style="text-align:center;margin-top:14px"><canvas class="dial" id="ch-dial" width="220" height="200"></canvas>
+    <div class="unit">阈值区间 ${fc.start}% → ${fc.stop}%</div></div>`)}
+  </div>
+ </div>`;
+ drawDial($("#ch-dial"),fc.stop-40,60,{ticks:30,color:"#c8ff00",labels:["40","60","80","100"],center:fc.stop+"%"});
+ window._fcMode=mode;
+}
+function fcMode(m){window._fcMode=m;
+ if(m===0){fcSend(false,95,100)}
+ else if(m===1){fcSend(true,70,80)}
+ else{toast("自定义:调整后点击应用")}}
+window.fcMode=fcMode;
+async function fcSend(en,s,p){try{await api("preference",{flexiCharger:{enabled:en,start:s,stop:p}});toast("FlexiCharger 已下发");setTimeout(loadCharger,400)}catch(e){toast(e.message)}}
+async function fcApply(){const m=window._fcMode;
+ if(m===2){await fcSend(true,+$("#fc-start").value,+$("#fc-stop").value)}
+ else if(m===1){await fcSend(true,70,80)}else{await fcSend(false,95,100)}}
+window.fcApply=fcApply;
+/* ================= CPU 超频 ================= */
 async function loadCPU(){
  const d=await api("cpu/info");const p=d.params;const inf=d.info;
  const coreInputs=(arr,n,pre)=>Array.from({length:n},(_,i)=>
-  `<div class="row"><label>${pre}核 ${i+1}</label>
-   <input type="number" class="cr" id="pc${pre}${i}" min="${inf.ratioMin}" max="${inf.ratioMax}" value="${arr[i]||0}" style="width:90px"></div>`).join("");
+  `<div class="row"><label class="k">${pre}核 ${i+1}</label>
+   <input type="number" id="pc${pre}${i}" min="${inf.ratioMin}" max="${inf.ratioMax}" value="${arr[i]||0}" style="width:86px"></div>`).join("");
  $("#page-cpu").innerHTML=`
  <div class="grid g2">
-  <div class="card"><h3>实时状态</h3><div class="kv">
-   <b>CPU</b><span>${STATUS?.cpu||""}</span>
-   <b>当前频率</b><span>${inf.CPUMHz} MHz</span>
-   <b>电压</b><span>${inf.CPUVolt.toFixed?inf.CPUVolt.toFixed(3):inf.CPUVolt} V</span>
-   <b>温度</b><span>${inf.CPUTemp} ℃</span>
-   <b>利用率</b><span>${inf.CPUUtil}%</span>
+  ${panel("实时状态",`<div class="kv">
+   <b>当前频率</b><span>${inf.CPUMHz} MHz</span><b>电压</b><span>${inf.CPUVolt} V</span>
+   <b>温度</b><span>${inf.CPUTemp} ℃</span><b>利用率</b><span>${inf.CPUUtil}%</span>
    <b>内存频率</b><span>${inf.MemMHz} MHz</span>
-   <b>Turbo 范围</b><span>${inf.TurboMinMHz} ~ ${inf.TurboMaxMHz} MHz(参考时钟 ${inf.RefClock})</span>
-   <b>倍频范围</b><span>${inf.ratioMin}x ~ ${inf.ratioMax}x</span>
-  </div></div>
-  <div class="card"><h3>功耗与电压</h3>
-   <div class="row"><label>PL1 (W)</label><input type="number" id="pl1" value="${p.PL1Watt}" min="1" max="330" style="width:90px"></div>
-   <div class="row"><label>PL2 (W)</label><input type="number" id="pl2" value="${p.PL2Watt}" min="1" max="330" style="width:90px"></div>
-   <div class="row"><label>PL 时间 (s)</label><input type="number" id="plt" value="${p.PLTimeSec}" min="1" max="128" style="width:90px"></div>
-   <div class="row"><label>VR Auto</label>
-    <label class="switch"><input type="checkbox" id="vra" ${p.VRAuto?"checked":""}><i></i></label></div>
-   <div class="row"><label>VR Limit</label><input type="number" id="vr" value="${p.VRLimit}" style="width:90px"></div>
-   <div class="row"><label>核心电压偏移</label><input type="number" id="vo" value="${p.CoreOffset}" step="10" style="width:90px"> mV</div>
-   <div class="row"><label>Override (V)</label><input type="number" id="ov" value="${p.OverrideVolt}" step="0.1" min="0" max="2" style="width:90px"></div>
-  </div>
-  <div class="card"><h3>P 核倍频(1-10)</h3>${coreInputs(p.PCores,10,"")}</div>
-  <div class="card"><h3>E 核倍频(1-16)</h3>${coreInputs(p.ECores,16,"E")}</div>
+   <b>Turbo 范围</b><span>${inf.TurboMinMHz} ~ ${inf.TurboMaxMHz} MHz</span>
+   <b>倍频范围</b><span>${inf.ratioMin}x ~ ${inf.ratioMax}x</span></div>`)}
+  ${panel("功耗与电压",`
+   <div class="row"><label class="k">PL1 (W)</label><input type="number" id="pl1" value="${p.PL1Watt}" min="1" max="330" style="width:86px">
+    <label class="k">PL2 (W)</label><input type="number" id="pl2" value="${p.PL2Watt}" min="1" max="330" style="width:86px"></div>
+   <div class="row"><label class="k">PL 时间 (s)</label><input type="number" id="plt" value="${p.PLTimeSec}" min="1" max="128" style="width:86px">
+    <label class="k">VR Limit</label><input type="number" id="vr" value="${p.VRLimit}" style="width:86px"></div>
+   <div class="row"><label class="k">VR Auto</label><span class="sw"><input type="checkbox" id="vra" ${p.VRAuto?"checked":""}><i></i></span>
+    <label class="k">Override (V)</label><input type="number" id="ov" value="${p.OverrideVolt}" step="0.1" min="0" max="2" style="width:86px"></div>
+   <div class="row"><label class="k">核心电压偏移</label><input type="number" id="vo" value="${p.CoreOffset}" step="10" style="width:86px"><span class="unit">mV</span></div>`)}
+  ${panel("P 核倍频 (1-10)",coreInputs(p.PCores,10,""))}
+  ${panel("E 核倍频 (1-16)",coreInputs(p.ECores,16,"E"))}
  </div>
- <div class="row" style="margin-top:12px">
-  <button class="act primary" onclick="cpuApply()">保存并应用(AppSettings page6)</button>
-  <button class="act" onclick="cpuDefault()">恢复默认</button>
- </div>`;
+ <div class="row"><button class="act pri" onclick="cpuApply()"><span>保存并应用 (AppSettings page6)</span></button>
+  <button class="act" onclick="cpuDefault()"><span>恢复默认</span></button></div>`;
 }
 async function cpuApply(){
  const p={PL1Watt:+$("#pl1").value,PL2Watt:+$("#pl2").value,PLTimeSec:+$("#plt").value,
@@ -420,106 +526,84 @@ async function cpuApply(){
   ECores:Array.from({length:16},(_,i)=>+($("#pcE"+i)?.value||0))};
  if(!confirm("应用超频参数?"))return;
  await api("cpu/apply",{params:p});toast("参数已写入 page6,后台 XTU 执行中")}
-async function cpuDefault(){if(!confirm("恢复全部默认值?"))return;
- await api("cpu/default");toast("已恢复默认");loadCPU()}
+async function cpuDefault(){if(!confirm("恢复全部默认值?"))return;await api("cpu/default");toast("已恢复默认");loadCPU()}
 window.cpuApply=cpuApply;window.cpuDefault=cpuDefault;
-
-/* ---------- GPU 超频 ---------- */
+/* ================= GPU 超频 ================= */
 async function loadGPU(){
  const g=await api("gpu/oc");
  $("#page-gpu").innerHTML=`
  <div class="grid g2">
-  <div class="card"><h3>GPU 信息</h3><div class="kv">
-   <b>GPU 数量</b><span>${g.count}</span>
-   <b>基础频率</b><span>${g.baseClock} MHz</span>
-   <b>NVAPI 状态</b><span>${g.ready?"就绪":"未就绪"}</span>
-   <b>驱动</b><span>${g.driver||"—"}</span>
-   <b>当前生效</b><span>核心 ${g.current.Core} / 显存 ${g.current.Mem} MHz</span>
-  </div></div>
-  <div class="card"><h3>超频偏移(MHz)</h3>
-   <div class="row"><label>GPU0 核心</label>
-    <input type="range" id="gc0" min="-200" max="400" step="5" value="${g.saved0.Core}"
-      oninput="$('#gc0v').textContent=this.value"><span class="val" id="gc0v">${g.saved0.Core}</span></div>
-   <div class="row"><label>GPU0 显存</label>
-    <input type="range" id="gm0" min="-200" max="1600" step="5" value="${g.saved0.Mem}"
-      oninput="$('#gm0v').textContent=this.value"><span class="val" id="gm0v">${g.saved0.Mem}</span></div>
+  ${panel("GPU 资讯",`<div class="kv">
+   <b>GPU 数量</b><span>${g.count}</span><b>基础频率</b><span>${g.baseClock} MHz</span>
+   <b>NVAPI</b><span>${g.ready?"就绪":"未就绪"}</span><b>驱动</b><span>${g.driver||"—"}</span>
+   <b>当前生效</b><span>核心 ${g.current.Core} / 显存 ${g.current.Mem} MHz</span></div>`)}
+  ${panel("超频偏移 (MHz)",`
+   <div class="row"><label class="k">GPU0 核心</label><span class="val" id="gc0v">${g.saved0.Core}</span></div>
+   <input type="range" id="gc0" min="-200" max="400" step="5" value="${g.saved0.Core}" oninput="$('#gc0v').textContent=this.value">
+   <div class="row"><label class="k">GPU0 显存</label><span class="val" id="gm0v">${g.saved0.Mem}</span></div>
+   <input type="range" id="gm0" min="-200" max="1600" step="5" value="${g.saved0.Mem}" oninput="$('#gm0v').textContent=this.value">
    ${g.count>1?`
-   <div class="row"><label>GPU1 核心</label>
-    <input type="range" id="gc1" min="-200" max="400" step="5" value="${g.saved1.Core}"
-      oninput="$('#gc1v').textContent=this.value"><span class="val" id="gc1v">${g.saved1.Core}</span></div>
-   <div class="row"><label>GPU1 显存</label>
-    <input type="range" id="gm1" min="-200" max="1600" step="5" value="${g.saved1.Mem}"
-      oninput="$('#gm1v').textContent=this.value"><span class="val" id="gm1v">${g.saved1.Mem}</span></div>`:""}
-   <div class="row">
-    <button class="act primary" onclick="gpuSave(${g.count>1})">保存并应用</button>
-    <button class="act" onclick="gpuReset(${g.count>1})">恢复默认</button></div>
-   <p class="hint">写入 AppSettings page5(非对称 int16 编码)→ ControlGPU.exe set_increment。</p>
-  </div>
+   <div class="row"><label class="k">GPU1 核心</label><span class="val" id="gc1v">${g.saved1.Core}</span></div>
+   <input type="range" id="gc1" min="-200" max="400" step="5" value="${g.saved1.Core}" oninput="$('#gc1v').textContent=this.value">
+   <div class="row"><label class="k">GPU1 显存</label><span class="val" id="gm1v">${g.saved1.Mem}</span></div>
+   <input type="range" id="gm1" min="-200" max="1600" step="5" value="${g.saved1.Mem}" oninput="$('#gm1v').textContent=this.value">`:""}
+   <div class="row" style="margin-top:12px">
+    <button class="act pri" onclick="gpuSave(${g.count>1})"><span>保存并应用</span></button>
+    <button class="act" onclick="gpuReset(${g.count>1})"><span>恢复默认</span></button></div>
+   <div class="hint">写入 AppSettings page5(非对称 int16)→ ControlGPU.exe set_increment</div>`)}
  </div>`;
 }
 async function gpuSave(dual){await api("gpu/oc",{action:"save",core0:+$("#gc0").value,mem0:+$("#gm0").value,
-  core1:+($("#gc1")?.value||0),mem1:+($("#gm1")?.value||0),dual});toast("GPU 偏移已下发")}
+ core1:+($("#gc1")?.value||0),mem1:+($("#gm1")?.value||0),dual});toast("GPU 偏移已下发")}
 async function gpuReset(dual){await api("gpu/oc",{action:"reset",dual});toast("已恢复默认");loadGPU()}
 window.gpuSave=gpuSave;window.gpuReset=gpuReset;
-
-/* ---------- 电池 ---------- */
+/* ================= 电池 ================= */
 async function loadBat(){
  const b=await api("battery");
  const hc=["健康","老化","需要更换","永久失效"][b.healthCode];
  const cls=b.healthCode===0?"ok":(b.healthCode===1?"warn":"err");
  $("#page-bat").innerHTML=`
  <div class="grid g2">
-  <div class="card"><h3>电池信息</h3><div class="kv">
-   <b>循环次数</b><span>${b.data.cycleCount}</span>
-   <b>满充容量</b><span>${b.data.fullCharge} mAh</span>
-   <b>设计容量</b><span>${b.data.design} mAh</span>
-   <b>容量保持</b><span>${b.data.capacityPct}%</span>
-   <b>使用年限</b><span>${(b.data.ageYears||0).toFixed(1)} 年</span>
-   <b>停止充电阈值</b><span>${b.data.stopChargeThreshold}%</span>
-  </div>
-  <div style="margin-top:10px">健康判定:<span class="badge ${cls}">${hc}</span></div></div>
-  <div class="card"><h3>电池校准(完全充放电两次)</h3>
-   <p class="hint">校准将强制断开适配器放电(WMI 121/28),请接入电源后开始;整个过程可能耗时数小时。</p>
-   <div class="row" style="margin-top:10px">
-    ${b.ongoing===0?`<button class="act primary" onclick="batRefresh('start')">开始校准</button>`:
-      `<span class="badge warn">校准进行中(阶段 ${b.ongoing})</span>
-       <button class="act" onclick="batRefresh('stop')">停止</button>`}
-   </div></div>
+  ${panel("电池信息",`<div class="kv">
+   <b>循环次数</b><span>${b.data.cycleCount}</span><b>满充容量</b><span>${b.data.fullCharge} mAh</span>
+   <b>设计容量</b><span>${b.data.design} mAh</span><b>容量保持</b><span>${b.data.capacityPct}%</span>
+   <b>使用年限</b><span>${(b.data.ageYears||0).toFixed(1)} 年</span><b>停充阈值</b><span>${b.data.stopChargeThreshold}%</span></div>
+   <div style="margin-top:12px">健康判定:<span class="badge ${cls}">${hc}</span></div>`)}
+  ${panel("电池校准",`<div class="hint">校准将强制断开适配器放电(WMI 121/28),请接入电源后开始;整个过程可能耗时数小时。</div>
+   <div class="row" style="margin-top:14px">
+    ${b.ongoing===0?`<button class="act pri" onclick="batRefresh('start')"><span>开始校准</span></button>`:
+     `<span class="badge warn">校准进行中(阶段 ${b.ongoing})</span><button class="act" onclick="batRefresh('stop')"><span>停止</span></button>`}</div>`)}
  </div>`;
 }
 async function batRefresh(a){if(a==="start"&&!confirm("开始电池校准?期间请保持适配器可断开。"))return;
  await api("battery/refresh",{action:a});toast("已下发");loadBat()}
 window.batRefresh=batRefresh;
-
-/* ---------- 节能计划 ---------- */
-let wattChart=null,wattData=[];
+/* ================= 节能计划 ================= */
+let wattTimer=null,wattData=[];
 async function loadEnergy(){
  $("#page-energy").innerHTML=`
  <div class="grid g2">
-  <div class="card"><h3>实时功耗</h3>
-   <canvas id="wattcv" width="560" height="180"></canvas>
-   <div class="row"><span class="num" id="wattnow" style="font-size:22px;font-weight:700">-- W</span>
-    <span style="color:var(--dim)" id="energy-meta">电池 — Wh · 适配器 — W</span></div>
-  </div>
-  <div class="card"><h3>充放电阈值</h3>
-   <div class="row"><label>充电上限 %</label>
-    <select id="ec-cl">${[60,70,80,90,100].map(v=>`<option ${v===100?"selected":""}>${v}</option>`).join("")}</select></div>
-   <div class="row"><label>放电下限 %</label>
+  ${panel("实时功耗",`<canvas class="chart" id="wattcv" width="560" height="170"></canvas>
+   <div class="row"><span class="bignum" id="wattnow" style="font-size:32px">-- W</span>
+    <span class="unit" id="energy-meta">电池 — Wh · 适配器 — W</span></div>`)}
+  ${panel("充放电阈值 / 调度",`
+   <div class="row"><label class="k">充电上限 %</label>
+    <select id="ec-cl">${[60,70,80,90,100].map(v=>`<option ${v===100?"selected":""}>${v}</option>`).join("")}</select>
+    <label class="k">放电下限 %</label>
     <select id="ec-dl">${[40,50,60,70,80,90,95].map(v=>`<option ${v===40?"selected":""}>${v}</option>`).join("")}</select></div>
-   <h3 style="margin-top:12px">调度一</h3>
-   <div class="row"><label>启用</label><label class="switch"><input type="checkbox" id="es1on"><i></i></label>
-    <input type="number" id="es1s" min="0" max="23" value="22" style="width:70px"> 时 起
-    <input type="number" id="es1e" min="0" max="23" value="6" style="width:70px"> 时 止</div>
-   <h3 style="margin-top:12px">调度二</h3>
-   <div class="row"><label>启用</label><label class="switch"><input type="checkbox" id="es2on"><i></i></label>
-    <input type="number" id="es2s" min="0" max="23" value="12" style="width:70px"> 时 起
-    <input type="number" id="es2e" min="0" max="23" value="14" style="width:70px"> 时 止</div>
-   <div class="row"><label>重复</label>
+   <h3 style="margin-top:14px">调度一</h3>
+   <div class="row"><span class="sw"><input type="checkbox" id="es1on"><i></i></span>
+    <input type="number" id="es1s" min="0" max="23" value="22" style="width:64px"> 时起
+    <input type="number" id="es1e" min="0" max="23" value="6" style="width:64px"> 时止</div>
+   <h3 style="margin-top:10px">调度二</h3>
+   <div class="row"><span class="sw"><input type="checkbox" id="es2on"><i></i></span>
+    <input type="number" id="es2s" min="0" max="23" value="12" style="width:64px"> 时起
+    <input type="number" id="es2e" min="0" max="23" value="14" style="width:64px"> 时止</div>
+   <div class="row"><label class="k">重复</label>
     <select id="es-ev"><option value="1">每天</option><option value="0">按星期</option></select></div>
-   <div class="row"><button class="act primary" onclick="energyApply()">应用节能计划</button>
-    <button class="act" onclick="energyDisable()">停用</button></div>
-   <p class="hint">下发:WMI 118(0x01000000 时间 / 0x02 生效日+阈值 / 0x03/04 调度 / 0x05 使能 / 0x06 阈值)</p>
-  </div>
+   <div class="row"><button class="act pri" onclick="energyApply()"><span>应用节能计划</span></button>
+    <button class="act" onclick="energyDisable()"><span>停用</span></button></div>
+   <div class="hint">下发:WMI 118(时间同步 → 生效日 → 调度×2 → 使能 → 阈值)</div>`)}
  </div>`;
  if(wattTimer)clearInterval(wattTimer);
  const tick=async()=>{try{const s=await api("energy/sample");wattData.push(s.watt);
@@ -530,17 +614,15 @@ async function loadEnergy(){
   drawWatt();}catch(e){}};
  tick();wattTimer=setInterval(tick,1000);
 }
-let wattTimer=null;
 function drawWatt(){const cv=$("#wattcv");if(!cv)return;const c=cv.getContext("2d");
  const W=cv.width,H=cv.height;c.clearRect(0,0,W,H);
- const max=Math.max(30,...wattData)*1.1;
- c.strokeStyle="#2a3140";c.beginPath();
- for(let i=1;i<4;i++){c.moveTo(0,H*i/4);c.lineTo(W,H*i/4)}c.stroke();
+ c.strokeStyle="#151a1e";c.lineWidth=1;
+ for(let i=1;i<4;i++){c.beginPath();c.moveTo(0,H*i/4);c.lineTo(W,H*i/4);c.stroke()}
  if(wattData.length<2)return;
- c.strokeStyle="#00e0ff";c.lineWidth=2;c.beginPath();
- wattData.forEach((v,i)=>{const x=i/(59)*W,y=H-(v/max)*H;i?c.lineTo(x,y):c.moveTo(x,y)});
- c.stroke();c.lineWidth=1;
-}
+ const max=Math.max(30,...wattData)*1.15;
+ c.strokeStyle="#25c8ff";c.lineWidth=2;c.shadowColor="#25c8ff";c.shadowBlur=8;c.beginPath();
+ wattData.forEach((v,i)=>{const x=i/59*W,y=H-(v/max)*H;i?c.lineTo(x,y):c.moveTo(x,y)});
+ c.stroke();c.shadowBlur=0}
 async function energyApply(){const p={Name:"go",Schedule1On:$("#es1on").checked,
  Schedule1Start:+$("#es1s").value,Schedule1End:+$("#es1e").value,
  Schedule2On:$("#es2on").checked,Schedule2Start:+$("#es2s").value,Schedule2End:+$("#es2e").value,
@@ -553,46 +635,57 @@ async function energyApply(){const p={Name:"go",Schedule1On:$("#es1on").checked,
 async function energyDisable(){await api("energy/apply",{Name:"off",ChargeLimit:100,DischargeLimit:95,
  Everyday:true,Weekdays:[true,true,true,true,true,true,true]});toast("已停用(阈值 100/95)")}
 window.energyApply=energyApply;window.energyDisable=energyDisable;
-
-/* ---------- Flexikey 宏键 ---------- */
-async function loadFlexikey(){
- const f=await api("flexikey/state");
- $("#page-flexikey").innerHTML=`
+/* ================= 偏好 ================= */
+async function loadPref(){
+ const p=await api("preference");
+ $("#page-pref").innerHTML=`
  <div class="grid g2">
-  <div class="card"><h3>配置文件(C:\\ComboKey\\profile.xml)</h3>
-   ${f.profiles.length?f.profiles.map(p=>`
-    <div class="row"><label style="min-width:0">
-      <input type="radio" name="fkprof" value="${p.name}" ${p.selected?"checked":""}
-        onchange="fkSelect('${p.name}')"> <b>${p.name}</b></label>
-     <span class="badge ${p.selected?"ok":""}">${p.selected?"已选中":"未选"}</span>
-     <span class="hint">KB:${p.kb?"开":"关"} 鼠标:${p.mouse?"开":"关"} · 槽位 ${p.slots}</span></div>`).join("")
-    :`<p class="hint">暂无配置</p>`}
-   <p class="hint">文件${f.exists?"已存在":"不存在(保存后创建)"};宏键明细编辑请直接修改 profile.xml(与原版 CC.exe 格式兼容)。</p>
-  </div>
-  <div class="card"><h3>过滤驱动状态</h3><div class="kv">
-    <b>键盘过滤</b><span>${f.kbEnabled?"已启用":"未启用"}</span>
-    <b>鼠标过滤</b><span>${f.mouseEnabled?"已启用":"未启用"}</span>
-   </div>
-   <div class="row" style="margin-top:12px">
-    <button class="act primary" onclick="fkApply()">应用选中配置</button>
-    <button class="act" onclick="fkDisable()">停用全部宏键</button></div>
-   <p class="hint">应用 = HKFltr kb.dll 全量重注册(清空→开关→注册),并广播 clevofnkey^205。</p>
-  </div>
+  ${panel("键盘 Fn 键行为",`
+   <div class="row"><label class="k">FnLock</label><span class="sw"><input type="checkbox" id="kb-fn" ${p.keyboard.fnLock?"checked":""}><i></i></span>
+    <label class="k">Win 键启用</label><span class="sw"><input type="checkbox" id="kb-win" ${p.keyboard.winKey?"checked":""}><i></i></span>
+    <label class="k">Win+Fn 切换</label><span class="sw"><input type="checkbox" id="kb-fnwin" ${p.keyboard.fnWin?"checked":""}><i></i></span></div>
+   <div class="row"><button class="act pri" onclick="saveKbPref()"><span>应用</span></button>
+    <span class="hint">WMI4 sub25(1=on,2=off)</span></div>`)}
+  ${panel("显示",`
+   <div class="row"><label class="k">蓝光过滤</label><span class="val" id="blv2">${p.blueLight}</span></div>
+   <input type="range" id="bl2" min="0" max="10" step="1" value="${p.blueLight}" oninput="$('#blv2').textContent=this.value">
+   <div class="row"><label class="k">PgUp/PgDn 启用</label><span class="sw"><input type="checkbox" id="pg" ${p.pgUpDn?"checked":""}><i></i></span>
+    <button class="act pri" onclick="saveDisplay()"><span>应用</span></button></div>`)}
+  ${panel("GPU 模式切换(需重启)",`
+   <div class="row"><select id="gpusw">
+     ${p.gpuSwitch.support&1?`<option value="1" ${p.gpuSwitch.current===1?"selected":""}>仅集成显卡</option>`:""}
+     ${p.gpuSwitch.support&2?`<option value="2" ${p.gpuSwitch.current===2?"selected":""}>仅独立显卡</option>`:""}
+     ${p.gpuSwitch.support&4?`<option value="3" ${p.gpuSwitch.current===3?"selected":""}>MS Hybrid</option>`:""}
+     ${p.gpuSwitch.support&8?`<option value="4" ${p.gpuSwitch.current===4?"selected":""}>动态切换</option>`:""}
+    </select>
+    <button class="act warn" onclick="saveGPU()"><span>应用并重启</span></button></div>
+   <div class="hint">WMI4 sub22 → shutdown -f -r -t 0</div>`)}
+  ${panel("界面语言",`
+   <div class="row"><select id="lang">${[
+     [0,"跟随系统"],[1,"English(US)"],[2,"English(GB)"],[3,"Español"],[4,"Deutsch"],[5,"Italiano"],
+     [6,"日本語"],[7,"한국어"],[8,"简体中文"],[9,"繁體中文"],[10,"Français"],[11,"Français(CA)"],
+     [12,"Português(BR)"],[13,"Português(PT)"],[14,"Türkçe"],[15,"ไทย"],[16,"Tiếng Việt"],[17,"Русский"],[18,"日本語(EP)"]]
+     .map(l=>`<option value="${l[0]}" ${p.language===l[0]?"selected":""}>${l[1]}</option>`).join("")}</select>
+    <button class="act pri" onclick="saveLang()"><span>应用</span></button></div>
+   <div class="hint">写入 AppSettings(1,2) 并广播 clevofnkey^102</div>`)}
  </div>`;
 }
-async function fkSelect(name){try{await api("flexikey/apply",{action:"select",name});toast("已选中 "+name)}catch(e){toast(e.message)}}
-async function fkApply(){try{await api("flexikey/apply",{action:"apply"});toast("宏键配置已应用");loadFlexikey()}catch(e){toast("应用失败:"+e.message)}}
-async function fkDisable(){try{await api("flexikey/apply",{action:"disable"});toast("已停用宏键");loadFlexikey()}catch(e){toast(e.message)}}
-window.fkSelect=fkSelect;window.fkApply=fkApply;window.fkDisable=fkDisable;
-
+async function saveKbPref(){await api("preference",{keyboard:{fnLock:$("#kb-fn").checked,
+ winKey:$("#kb-win").checked,fnWin:$("#kb-fnwin").checked}});toast("键盘设置已下发")}
+async function saveDisplay(){await api("preference",{blueLight:+$("#bl2").value,pgUpDn:$("#pg").checked});toast("显示设置已应用")}
+async function saveGPU(){if(!confirm("切换 GPU 模式将立即重启,继续?"))return;
+ await api("preference",{gpuSwitch:+$("#gpusw").value});toast("已下发,即将重启")}
+async function saveLang(){await api("preference",{language:+$("#lang").value});toast("语言已切换")}
+window.saveKbPref=saveKbPref;window.saveDisplay=saveDisplay;window.saveGPU=saveGPU;window.saveLang=saveLang;
 /* ---------- 启动 ---------- */
-const PAGE_INIT={home:loadHome,mode:loadMode,pref:loadPref,fan:loadFan,kb:loadKB,flexikey:loadFlexikey,
- cpu:loadCPU,gpu:loadGPU,bat:loadBat,energy:loadEnergy};
+const PAGE_INIT={system:loadSystem,kb:loadKB,flexikey:loadFlexikey,charger:loadCharger,
+ cpu:loadCPU,gpu:loadGPU,bat:loadBat,energy:loadEnergy,pref:loadPref};
 PAGES.forEach(p=>{const d=document.createElement("div");d.className="page";d.id="page-"+p.id;
  $("#main").appendChild(d)});
-(async()=>{try{await loadHome();nav("home")}catch(e){
- $("#main").innerHTML=`<div class="card"><h3>无法连接 ACPI 桥驱动</h3>
-  <p>${e.message}</p><p class="hint">请确认 AcpiBridge 驱动已安装且以管理员身份运行。</p></div>`;}})();
+(async()=>{try{await loadSystem();nav("system")}catch(e){
+ $("#main").innerHTML=`<div class="panel"><i class="cnr c1"></i><i class="cnr c2"></i><i class="cnr c3"></i><i class="cnr c4"></i>
+  <h3>无法连接 ACPI 桥驱动</h3><p>${e.message}</p>
+  <p class="hint">请确认 AcpiBridge 驱动已安装且以管理员身份运行。</p></div>`;}})();
 </script>
 </body>
 </html>
