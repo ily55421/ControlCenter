@@ -60,11 +60,11 @@ func main() {
 	}
 
 	// 布局:两行按钮 + 日志区
-	win.AddButton("① 一键安装", 16, 14, 150, 36, onInstall)
-	win.AddButton("② 启动 Control Center", 176, 14, 190, 36, onStart)
-	win.AddButton("硬件诊断", 376, 14, 110, 36, onDiagnose)
-	win.AddButton("卸载", 496, 14, 110, 36, onUninstall)
-	win.AddButton("退出", 616, 14, 110, 36, func() { os.Exit(0) })
+	win.AddButton("▶ 直接启动(免安装)", 16, 14, 190, 36, onStart)
+	win.AddButton("安装热键服务(可选)", 216, 14, 170, 36, onInstall)
+	win.AddButton("硬件诊断", 396, 14, 110, 36, onDiagnose)
+	win.AddButton("卸载服务", 516, 14, 110, 36, onUninstall)
+	win.AddButton("退出", 636, 14, 90, 36, func() { os.Exit(0) })
 	win.AddEdit(16, 62, 710, 450)
 	win.Show()
 
@@ -85,7 +85,7 @@ func autoCheck() {
 		if eventbus.LogsExist() {
 			log("✓ 事件日志(OutLog / PowerBiosServerLog)已就绪")
 		} else {
-			log("… 事件日志未创建(将在一键安装时创建)")
+log("… 事件日志未创建(仅影响热键事件;点【直接启动】可正常使用面板)")
 		}
 		if win32.ServiceExists(svcName) {
 			if win32.ServiceRunning(svcName) {
@@ -94,14 +94,14 @@ func autoCheck() {
 				log("! 服务 %s 已安装但未运行", svcName)
 			}
 		} else {
-			log("… 服务 %s 未安装(热键事件源,建议一键安装)", svcName)
+			log("… 服务 %s 未安装(仅影响 Fn 热键;面板全部功能不受影响)", svcName)
 		}
 		exists := win32.ProcessesExist("ccfnkey.exe", "ccapp.exe")
 		if exists["ccfnkey.exe"] {
 			log("✓ 托盘(ccfnkey)运行中")
 		}
 		if exists["ccapp.exe"] {
-			log("✓ 主界面(ccapp)运行中 → http://127.0.0.1:8765/")
+			log("✓ 主界面(ccapp)运行中")
 		}
 	}()
 }
@@ -179,14 +179,14 @@ func startAll() {
 			if err := win32.StartAsActiveUser(`"` + app + `"`); err != nil {
 				log("主界面启动失败: %v", err)
 			} else {
-				log("✓ 主界面已启动(浏览器将自动打开 http://127.0.0.1:8765/)")
+				log("✓ 主界面已启动(原生窗口)")
 			}
 		} else {
 			log("✗ 未找到 ccapp.exe")
 		}
 	} else {
-		log("主界面已在运行 → http://127.0.0.1:8765/")
-		win32.OpenAppWindow("http://127.0.0.1:8765/")
+		log("主界面已在运行,激活窗口")
+		win32.FocusWindow("Control Center")
 	}
 }
 
