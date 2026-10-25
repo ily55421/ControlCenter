@@ -123,8 +123,9 @@ type GUI struct {
 
 	// 表盘动画值(UI 线程;目标来自快照,每帧向目标收敛)
 	cpuDial, fanCpuDial, fanGpuDial, chDial animVal
+	cpuMHz, cpuTemp animVal // 大数字平滑(频率/温度文本随动画值刷新)
 
-	// CPU 历史(2s 一点 × 60 = 2 分钟窗口;轮询协程写/UI 读)
+	// CPU 历史(1s 一点 × 60 = 1 分钟窗口;轮询协程写/UI 读)
 	cpuTempH []float64
 	cpuUtilH []float64
 
@@ -341,12 +342,12 @@ func (g *GUI) pollLoop() {
 		}
 		page := atomic.LoadInt32(&g.pageAtomic)
 		now := time.Now()
-		if page == pgSystem && now.Sub(lastLive) >= 2*time.Second {
+		if page == pgSystem && now.Sub(lastLive) >= time.Second {
 			lastLive = now
 			live := g.be.FanLive()
 			ci, _, _ := g.be.CPUInfo()
 			g.live.Store(&LiveSnap{Live: live, Ci: ci})
-			// CPU 历史(温度/利用率,60 点滚动)—— 与快照同节奏写入
+			// CPU 历史(温度/利用率,60 点滚动,1s 采样 = 1 分钟窗口)
 			g.histMu.Lock()
 			g.cpuTempH = append(g.cpuTempH, float64(ci.CPUTemp))
 			g.cpuUtilH = append(g.cpuUtilH, float64(ci.CPUUtil))
@@ -452,8 +453,17 @@ func (g *GUI) layoutRoot(gtx C) D {
 	darkOnce.Do(func() { go win32.ApplyDarkOwnWindows() })
 	// 全局快捷键:Ctrl+1..9 直达页
 	g.hotkeys(gtx)
-	// 背景底色
-	fillRect(gtx, pal.BG)
+	// 背景:纯黑底 + 顶部向下的垂直渐变(4 条带,顶部微亮营造层次)
+	w0, h0 := gtx.Constraints.Max.X, gtx.Constraints.Max.Y
+	fillArea(gtx, image.Rect(0, 0, w0, h0), pal.BG)
+	bands := []color.NRGBA{
+		{R: 0x0C, G: 0x0F, B: 0x13, A: 0xFF},
+		{R: 0x08, G: 0x0A, B: 0x0D, A: 0xFF},
+		{R: 0x04, G: 0x05, B: 0x07, A: 0xFF},
+	}
+	for i, c := range bands {
+		fillArea(gtx, image.Rect(0, h0*i/5, w0, h0*(i+1)/5), c)
+	}
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(g.layoutSidebar),
 		layout.Rigid(func(gtx C) D {
@@ -489,9 +499,9 @@ func (g *GUI) hotkeys(gtx C) {
 }
 
 func (g *GUI) layoutSidebar(gtx C) D {
-	w := gtx.Dp(118)
+	w := gtx.Dp(unit.Dp(112))
 	if g.sideMin {
-		w = gtx.Dp(62)
+		w = gtx.Dp(58)
 	}
 	fillArea(gtx, image.Rect(0, 0, w, gtx.Constraints.Max.Y), colorSafe(0x0B, 0x0D, 0x0F))
 	fillArea(gtx, image.Rect(w-1, 0, w, gtx.Constraints.Max.Y), colorSafe(0x15, 0x18, 0x1B))
@@ -501,15 +511,18 @@ func (g *GUI) layoutSidebar(gtx C) D {
 				g.sideMin = !g.sideMin
 			}
 			return g.w.sideToggle.Layout(gtx, func(gtx C) D {
-				h := gtx.Dp(52)
+				h := gtx.Dp(44)
 				fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x10, 0x13, 0x16))
 				fillArea(gtx, image.Rect(0, h-1, w, h), colorSafe(0x15, 0x18, 0x1B))
-				td, call := textDims(gtx, "≡", 18, colorSafe(0x9A, 0xA4, 0xAD))
+				td, call := textDims(gtx, "≡", 16, colorSafe(0x9A, 0xA4, 0xAD))
 				replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
 				return D{Size: image.Pt(w, h)}
 			})
 		}),
 		layout.Rigid(func(gtx C) D {
+			// 每项固定高 66dp:背景与内容同高(修复旧版 64dp 背景对 75dp 内容的错位),
+			// 图标 22 + 文字 11 垂直居中;选中项左侧 3dp 荧光竖条。
+			const itemH = 66
 			var items []layout.Widget
 			for i := 0; i < pgCount; i++ {
 				i := i
@@ -520,28 +533,37 @@ func (g *GUI) layoutSidebar(gtx C) D {
 						g.navTo(i)
 					}
 					return clk.Layout(gtx, func(gtx C) D {
+						h := gtx.Dp(unit.Dp(itemH))
+						if active {
+							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x17, 0x19, 0x1C))
+							fillArea(gtx, image.Rect(0, 0, gtx.Dp(3), h), pal.Lime)
+						} else if clk.Hovered() {
+							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x10, 0x14, 0x1A))
+						}
 						iconCol := colorSafe(0x59, 0x63, 0x6D)
 						lblCol := iconCol
 						if active {
-							fillArea(gtx, image.Rect(0, 0, w, gtx.Dp(64)), colorSafe(0x17, 0x19, 0x1C))
 							iconCol, lblCol = pal.Lime, pal.Lime
 						} else if clk.Hovered() {
-							fillArea(gtx, image.Rect(0, 0, w, gtx.Dp(64)), colorSafe(0x0E, 0x11, 0x14))
 							iconCol = colorSafe(0xAE, 0xB8, 0xC1)
 							lblCol = iconCol
 						}
-						return layout.Inset{Top: unit.Dp(13), Bottom: unit.Dp(12)}.Layout(gtx, func(gtx C) D {
-							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx C) D { return drawIcon(gtx, pageIcons[i], 26, iconCol) }),
-								layout.Rigid(vSpacer(7)),
-								layout.Rigid(func(gtx C) D {
-									if g.sideMin {
-										return D{}
-									}
-									return label(gtx, pageTitles[i], 12, lblCol)
-								}),
-							)
-						})
+						// 内容在固定高内垂直居中:测量后按余量偏移
+						macro := op.Record(gtx.Ops)
+						inner := layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D { return drawIcon(gtx, pageIcons[i], 22, iconCol) }),
+							layout.Rigid(vSpacer(5)),
+							layout.Rigid(func(gtx C) D {
+								if g.sideMin {
+									return D{}
+								}
+								return label(gtx, pageTitles[i], 11, lblCol)
+							}),
+						)
+						call := macro.Stop()
+						top := (h - inner.Size.Y) / 2
+						replayText(gtx, call, 0, top)
+						return D{Size: image.Pt(w, h)}
 					})
 				})
 			}
@@ -559,8 +581,15 @@ func (g *GUI) layoutHeader(gtx C) D {
 	h := gtx.Dp(46)
 	fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x0A, 0x0C, 0x0E))
 	fillArea(gtx, image.Rect(0, h-1, w, h), colorSafe(0x14, 0x17, 0x1A))
-	td, call := textDims(gtx, "Control Center", 17, pal.Txt)
-	replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
+	td, call := textDims(gtx, "Control Center", 16, pal.Txt)
+	tx := (w - td.Size.X) / 2
+	ty := (h - td.Size.Y) / 2
+	// 标题两侧的装饰短划线(青色微光)
+	lineCol := alpha(pal.Cyan, 0x60)
+	ly := h/2
+	fillArea(gtx, image.Rect(tx-gtx.Dp(38), ly, tx-gtx.Dp(14), ly+1), lineCol)
+	fillArea(gtx, image.Rect(tx+td.Size.X+gtx.Dp(14), ly, tx+td.Size.X+gtx.Dp(38), ly+1), lineCol)
+	replayText(gtx, call, tx, ty)
 	// 系统信息按钮(右上角):先平移再布局,保证画在正确位置
 	defer op.Affine(f32Translate(float32(w-gtx.Dp(44)), float32((h-gtx.Dp(26))/2))).Push(gtx.Ops).Pop()
 	if g.w.info.Clicked(gtx) {

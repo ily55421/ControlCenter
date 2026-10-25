@@ -240,7 +240,7 @@ func panel(gtx C, title string, body layout.Widget) D {
 		fillArea(gtx, image.Rect(0, 0, w, h), pal.Panel)
 		border(gtx, image.Rect(0, 0, w, h), pal.Line, 1)
 		cornerMarks(gtx, w, h)
-		td, tcall := textDims(gtx, title, 13, color.NRGBA{R: 0xCF, G: 0xD6, B: 0xDC, A: 0xFF})
+		td, tcall := textDims(gtx, title, 12, color.NRGBA{R: 0xC2, G: 0xCC, B: 0xD4, A: 0xFF})
 		replayText(gtx, tcall, gtx.Dp(16), gtx.Dp(9)+(gtx.Dp(18)-td.Size.Y)/2)
 		call.Add(gtx.Ops)
 		return D{Size: image.Pt(w, h)}

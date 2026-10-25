@@ -133,29 +133,33 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 		util = float32(live.Ci.CPUUtil)
 		mhz, temp = live.Ci.CPUMHz, live.Ci.CPUTemp
 	}
+	// 动画值:表盘与大数字共用,数字随动画平滑滚动(1s 采样也不显跳变)
+	utilA := g.cpuDial.tick(util)
+	mhzA := g.cpuMHz.tick(float32(mhz))
+	tempA := g.cpuTemp.tick(float32(temp))
 	return col(gtx,
 		// CPU 大表盘(动画:指针平滑扫向目标)
 		func(gtx C) D {
-			return dialSized(gtx, 330, 300, g.cpuDial.tick(util), 100, dialOpt{
+			return dialSized(gtx, 300, 272, utilA, 100, dialOpt{
 				ticks: 50, labels: []string{"0", "20", "40", "60", "80", "100"}, center: "CPU"})
 		},
 		vSpacer(4),
-		// 三格数字
+		// 三格数字(动画平滑)
 		func(gtx C) D {
 			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Baseline}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
-					return col(gtx, func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%d", mhz), 46) },
-						func(gtx C) D { return label(gtx, "MHz · 时序", 13, pal.Dim) })
+					return col(gtx, func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f", mhzA), 38) },
+						func(gtx C) D { return label(gtx, "MHz · 时序", 12, pal.Dim) })
 				}),
 				layout.Rigid(func(gtx C) D {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return bigNum(gtx, pctOrDash(util), 30) }),
-						layout.Rigid(func(gtx C) D { return label(gtx, "利用率", 13, pal.Dim) }))
+						layout.Rigid(func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f%%", utilA), 28) }),
+						layout.Rigid(func(gtx C) D { return label(gtx, "利用率", 12, pal.Dim) }))
 				}),
 				layout.Rigid(func(gtx C) D {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.End}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return bigNum(gtx, numOrDash(temp), 46) }),
-						layout.Rigid(func(gtx C) D { return label(gtx, "℃ · 温度", 13, pal.Dim) }))
+						layout.Rigid(func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f", tempA), 38) }),
+						layout.Rigid(func(gtx C) D { return label(gtx, "℃ · 温度", 12, pal.Dim) }))
 				}),
 			)
 		},
@@ -320,6 +324,27 @@ func (g *GUI) curveEditor(gtx C, i int, s *sysSnap) D {
 	return dims
 }
 
+// gridPair 两个等宽半列(窄窗自动退化为单列堆叠)。
+func gridPair(gtx C, l, r layout.Widget) D {
+	w := gtx.Constraints.Max.X
+	gap := gtx.Dp(14)
+	half := (w - gap) / 2
+	if half < gtx.Dp(210) {
+		return col(gtx, l, vSpacer(2), r)
+	}
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints = layout.Exact(image.Pt(half, gtx.Constraints.Max.Y))
+			return l(gtx)
+		}),
+		layout.Rigid(hSpacerSP(gap)),
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints = layout.Exact(image.Pt(half, gtx.Constraints.Max.Y))
+			return r(gtx)
+		}),
+	)
+}
+
 func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 	kbDuty, kbRpm, kbTemp := 0, 0, 0
 	gDuty, gRpm, gTemp := 0, 0, 0
@@ -330,8 +355,120 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 		cpuMHz = live.Ci.CPUMHz
 	}
 	gpuDead := gDuty == 0 && gRpm == 0 && gTemp == 0 // dGPU 断电(安静/安静增强)时 EC 全零
+
+	// ---- 半宽面板部件 ----
+	fanPanel := func(gtx C) D {
+		return panel(gtx, "风扇转速", func(gtx C) D {
+			dialCol := func(rpm, duty, temp int, anim *animVal, name string) layout.Widget {
+				return func(gtx C) D {
+					gtx.Constraints.Max.X = gtx.Dp(132)
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D {
+							return dialSized(gtx, 128, 118, anim.tick(float32(duty)), 100,
+								dialOpt{ticks: 24, color: pal.Lime, center: fmt.Sprintf("%d%%", duty)})
+						}),
+						layout.Rigid(func(gtx C) D {
+							if rpm == 0 && temp == 0 {
+								return label(gtx, name+" 无数据", 11, pal.Dim)
+							}
+							return label(gtx, fmt.Sprintf("%s %d RPM·%d℃", name, rpm, temp), 11, pal.Dim)
+						}),
+					)
+				}
+			}
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
+				layout.Rigid(dialCol(kbRpm, kbDuty, kbTemp, &g.fanCpuDial, "CPU")),
+				layout.Rigid(dialCol(gRpm, gDuty, gTemp, &g.fanGpuDial, "GPU")),
+			)
+		})
+	}
+	gpuPanel := func(gtx C) D {
+		return panel(gtx, "GPU 资讯", func(gtx C) D {
+			readyTxt := "未就绪"
+			if s.gpu.Ready {
+				readyTxt = "就绪"
+			}
+			if gpuDead {
+				return col(gtx,
+					func(gtx C) D {
+						return badge(gtx, "独显已断电", "warn")
+					},
+					vSpacer(4),
+					func(gtx C) D { return label(gtx, "安静模式下 EC 不上报独显数据", 11, pal.Dim) },
+					vSpacer(4),
+					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },
+				)
+			}
+			return col(gtx,
+				func(gtx C) D {
+					if s.gpu.BaseClock > 0 {
+						return col(gtx,
+							func(gtx C) D { return kvRow(gtx, "时序", fmt.Sprintf("%d MHz", s.gpu.BaseClock)) },
+							func(gtx C) D { return dotBar(gtx, clamp01(float32(s.gpu.BaseClock)/3000), true) })
+					}
+					return kvRow(gtx, "时序", "—")
+				},
+				vSpacer(5),
+				func(gtx C) D { return kvRow(gtx, "GPU 温度", fmt.Sprintf("%d ℃", gTemp)) },
+				func(gtx C) D { return dotBar(gtx, clamp01(float32(gTemp)/100), false) },
+				vSpacer(5),
+				func(gtx C) D { return kvRow(gtx, "风扇占空", fmt.Sprintf("%d %%", gDuty)) },
+				func(gtx C) D { return dotBar(gtx, clamp01(float32(gDuty)/100), false) },
+				vSpacer(5),
+				func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },
+			)
+		})
+	}
+	sysPanel := func(gtx C) D {
+		return panel(gtx, "系统资讯", func(gtx C) D {
+			return col(gtx,
+				func(gtx C) D { return kvRow(gtx, "CPU", orDash(s.st.CPU)) },
+				func(gtx C) D { return kvRow(gtx, "核心", fmt.Sprintf("%d", s.st.Cores)) },
+				func(gtx C) D { return kvRow(gtx, "产品", s.st.Manufacturer+" "+s.st.Product) },
+				func(gtx C) D { return kvRow(gtx, "BIOS", orDash(s.st.BIOS)) },
+				func(gtx C) D { return kvRow(gtx, "键盘灯", kbTypeName(int(s.st.KBType))) },
+			)
+		})
+	}
+	prefPanel := func(gtx C) D {
+		return panel(gtx, "偏好", func(gtx C) D {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1, func(gtx C) D { return g.tileGrid(gtx, s) }),
+			)
+		})
+	}
+	cfgPanel := func(gtx C) D {
+		return panel(gtx, "配置", func(gtx C) D {
+			gpuName := []string{"", "仅集显", "仅独显", "MS Hybrid", "动态"}
+			gn := ""
+			if s.pref.GPUSwitch.Current >= 0 && s.pref.GPUSwitch.Current < len(gpuName) {
+				gn = gpuName[s.pref.GPUSwitch.Current]
+			}
+			return col(gtx,
+				func(gtx C) D {
+					return row(gtx, func(gtx C) D { return label(gtx, "蓝光", 12, pal.Dim) },
+						hSpacer(6),
+						func(gtx C) D { return label(gtx, fmt.Sprintf("%d/10", g.w.blSlider.value()), 13, pal.Lime) })
+				},
+				func(gtx C) D { return g.w.blSlider.layout(gtx) },
+				vSpacer(6),
+				func(gtx C) D {
+					return col(gtx,
+						func(gtx C) D {
+							return row(gtx, func(gtx C) D { return label(gtx, "GPU 模式", 12, pal.Dim) },
+								hSpacer(6), func(gtx C) D { return badge(gtx, gn, "") })
+						},
+						vSpacer(4),
+						func(gtx C) D { return actBtn(gtx, &g.w.gpuSwitch, "切换…", btnPlain, false) },
+					)
+				},
+			)
+		})
+	}
+
+	// ---- 组装:全宽监控 + 全宽风扇 + 两对半宽(默认一屏显示完) ----
 	return col(gtx,
-		// CPU 监控:温度/利用率双曲线(2 分钟窗口)
 		func(gtx C) D {
 			return panel(gtx, "CPU 监控", func(gtx C) D {
 				g.histMu.Lock()
@@ -340,159 +477,55 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 				g.histMu.Unlock()
 				return col(gtx,
 					func(gtx C) D {
-						return drawMultiChart(gtx, 120, []chartSeries{
+						return drawMultiChart(gtx, 92, []chartSeries{
 							{data: tempH, max: 100, col: pal.Yellow, label: "温度℃"},
 							{data: utilH, max: 100, col: pal.Cyan, label: "利用率%"},
 						})
 					},
 					func(gtx C) D {
-						return label(gtx, fmt.Sprintf("当前频率 %d MHz · 每 2 秒采样,最近 2 分钟", cpuMHz), 11, pal.Dim)
+						return label(gtx, fmt.Sprintf("当前频率 %d MHz · 每秒采样,最近 1 分钟", cpuMHz), 11, pal.Dim)
 					})
 			})
 		},
-		// 风扇转速双表盘(动画 + 温度标签)
-		func(gtx C) D {
-			return panel(gtx, "风扇转速", func(gtx C) D {
-				dialCol := func(rpm, duty, temp int, anim *animVal, name string) layout.Widget {
-					return func(gtx C) D {
-						gtx.Constraints.Max.X = gtx.Dp(180)
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								return dialSized(gtx, 150, 140, anim.tick(float32(duty)), 100,
-									dialOpt{ticks: 30, color: pal.Lime, center: fmt.Sprintf("%d%%", duty)})
-							}),
-							layout.Rigid(func(gtx C) D {
-								if rpm == 0 && temp == 0 {
-									return label(gtx, name+" 风扇 无数据", 13, pal.Dim)
-								}
-								return label(gtx, fmt.Sprintf("%s %d RPM · %d℃", name, rpm, temp), 13, pal.Dim)
-							}),
-						)
-					}
-				}
-				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
-					layout.Rigid(dialCol(kbRpm, kbDuty, kbTemp, &g.fanCpuDial, "CPU")),
-					layout.Rigid(dialCol(gRpm, gDuty, gTemp, &g.fanGpuDial, "GPU")),
-				)
-			})
-		},
-		// GPU 资讯(dGPU 断电时状态化显示,不再出现误导性 0/—)
-		func(gtx C) D {
-			return panel(gtx, "GPU 资讯", func(gtx C) D {
-				readyTxt := "未就绪"
-				if s.gpu.Ready {
-					readyTxt = "就绪"
-				}
-				if gpuDead {
-					return col(gtx,
-						func(gtx C) D {
-							return row(gtx, func(gtx C) D { return badge(gtx, "独显已断电", "warn") },
-								hSpacer(10),
-								func(gtx C) D { return label(gtx, "安静模式 / 安静增强下 EC 不上报独显数据", 12, pal.Dim) })
-						},
-						vSpacer(6),
-						func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt+" · "+orDash(s.gpu.Driver)) },
-					)
-				}
-				return col(gtx,
-					func(gtx C) D {
-						if s.gpu.BaseClock > 0 {
-							return col(gtx,
-								func(gtx C) D { return kvRow(gtx, "时序", fmt.Sprintf("%d MHz", s.gpu.BaseClock)) },
-								func(gtx C) D { return dotBar(gtx, clamp01(float32(s.gpu.BaseClock)/3000), true) })
-						}
-						return kvRow(gtx, "时序", "—")
-					},
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "GPU 温度", fmt.Sprintf("%d ℃", gTemp)) },
-					func(gtx C) D { return dotBar(gtx, clamp01(float32(gTemp)/100), false) },
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "风扇占空", fmt.Sprintf("%d %%", gDuty)) },
-					func(gtx C) D { return dotBar(gtx, clamp01(float32(gDuty)/100), false) },
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt+" · "+orDash(s.gpu.Driver)) },
-				)
-			})
-		},
-		// 系统资讯
-		func(gtx C) D {
-			return panel(gtx, "系统资讯", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D { return kvRow(gtx, "CPU", orDash(s.st.CPU)) },
-					func(gtx C) D { return kvRow(gtx, "核心", fmt.Sprintf("%d", s.st.Cores)) },
-					func(gtx C) D { return kvRow(gtx, "产品", s.st.Manufacturer+" "+s.st.Product) },
-					func(gtx C) D { return kvRow(gtx, "BIOS", orDash(s.st.BIOS)) },
-					func(gtx C) D { return kvRow(gtx, "键盘灯", kbTypeName(int(s.st.KBType))) },
-					func(gtx C) D { return kvRow(gtx, "语言", fmt.Sprintf("%d", s.st.Language)) },
-				)
-			})
-		},
-		// 偏好磁贴
-		func(gtx C) D {
-			return panel(gtx, "偏好", func(gtx C) D {
-				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-					layout.Flexed(1, func(gtx C) D { return g.tileRow1(gtx, s) }),
-				)
-			})
-		},
-		// 配置
-		func(gtx C) D {
-			return panel(gtx, "配置", func(gtx C) D {
-				gpuName := []string{"", "仅集显", "仅独显", "MS Hybrid", "动态"}
-				gn := ""
-				if s.pref.GPUSwitch.Current >= 0 && s.pref.GPUSwitch.Current < len(gpuName) {
-					gn = gpuName[s.pref.GPUSwitch.Current]
-				}
-				return col(gtx,
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, "蓝光滤镜", 13, pal.Dim) },
-							hSpacer(8),
-							func(gtx C) D { return label(gtx, fmt.Sprintf("%d/10", g.w.blSlider.value()), 14, pal.Lime) })
-					},
-					func(gtx C) D { return g.w.blSlider.layout(gtx) },
-					vSpacer(8),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, "GPU 模式", 13, pal.Dim) },
-							hSpacer(8),
-							func(gtx C) D { return badge(gtx, gn, "") },
-							hSpacer(12),
-							func(gtx C) D { return actBtn(gtx, &g.w.gpuSwitch, "切换…", btnPlain, false) })
-					},
-				)
-			})
-		},
+		fanPanel,
+		func(gtx C) D { return gridPair(gtx, gpuPanel, sysPanel) },
+		func(gtx C) D { return gridPair(gtx, prefPanel, cfgPanel) },
 	)
 }
 
-func (g *GUI) tileRow1(gtx C, s *sysSnap) D {
+// tileGrid 偏好磁贴(半宽面板内 2 列 × 3 行,紧凑排布)。
+func (g *GUI) tileGrid(gtx C, s *sysSnap) D {
 	type tileDef struct {
 		clk *widget.Clickable
 		ico string
 		lbl string
 		on  bool
 	}
-	row1 := []tileDef{
+	defs := []tileDef{
 		{&g.w.tileWin, "pf", "Win 键锁", s.pref.Keyboard.WinKey},
 		{&g.w.tileFnWin, "fk", "Win-Fn 交换", s.pref.Keyboard.FnWin},
 		{&g.w.tileFnLock, "kb", "Fn 键锁", s.pref.Keyboard.FnLock},
-	}
-	row2 := []tileDef{
 		{&g.w.tileTurbo, "en", "涡轮风扇", s.opts.TurboFan},
 		{&g.w.tileDTT, "cpu", "CPU DTT", s.opts.DTT},
 		{&g.w.tileLow, "system", "低刷新率", s.opts.LowRefresh},
 	}
-	tileRow := func(defs []tileDef) layout.Widget {
+	tileRow := func(ds []tileDef) layout.Widget {
 		return func(gtx C) D {
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
-				flexWrap(
-					func(gtx C) D { return g.tile(gtx, defs[0].clk, defs[0].ico, defs[0].lbl, defs[0].on) },
-					func(gtx C) D { return g.tile(gtx, defs[1].clk, defs[1].ico, defs[1].lbl, defs[1].on) },
-					func(gtx C) D { return g.tile(gtx, defs[2].clk, defs[2].ico, defs[2].lbl, defs[2].on) },
-				)...)
+			kids := make([]layout.FlexChild, 0, len(ds))
+			for _, d := range ds {
+				d := d
+				kids = append(kids, layout.Rigid(func(gtx C) D {
+					return g.tile(gtx, d.clk, d.ico, d.lbl, d.on)
+				}))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx, kids...)
 		}
 	}
-	return col(gtx, tileRow(row1), tileRow(row2))
+	return col(gtx,
+		tileRow(defs[0:2]),
+		tileRow(defs[2:4]),
+		tileRow(defs[4:6]),
+	)
 }
 
 // tile 磁贴(图标 + 文本,点亮为荧光绿)。
@@ -504,11 +537,11 @@ func (g *GUI) tile(gtx C, clk *widget.Clickable, ico, lbl string, on bool) D {
 		colr = color.NRGBA{R: 0xAE, G: 0xB8, B: 0xC1, A: 0xFF}
 	}
 	return clk.Layout(gtx, func(gtx C) D {
-		return layout.Inset{Right: unit.Dp(10), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx C) D {
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D { return drawIcon(gtx, ico, 38, colr) }),
-				layout.Rigid(vSpacer(7)),
-				layout.Rigid(func(gtx C) D { return label(gtx, lbl, 12, colr) }),
+				layout.Rigid(func(gtx C) D { return drawIcon(gtx, ico, 30, colr) }),
+				layout.Rigid(vSpacer(4)),
+				layout.Rigid(func(gtx C) D { return label(gtx, lbl, 11, colr) }),
 			)
 		})
 	})
