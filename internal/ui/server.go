@@ -55,13 +55,27 @@ func New(w *wmi.Client, as *appsettings.Store, kb *keyboard.Controller, fc *fan.
 	}
 }
 
+// maxBodyBytes 请求体上限(面板配置 JSON 远小于此,用于挡住意外的大请求)。
+const maxBodyBytes = 1 << 20
+
+// newHTTPServer 带超时的服务器:即使是回环地址也要防慢连接长期占用。
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
+}
+
 // Start 启动 HTTP 服务(随机本地端口)并返回地址。
 func (s *Server) Start() (string, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}
-	go http.Serve(ln, s.Handler())
+	go newHTTPServer(s.Handler()).Serve(ln)
 	return fmt.Sprintf("http://127.0.0.1:%d/", ln.Addr().(*net.TCPAddr).Port), nil
 }
 
@@ -71,7 +85,7 @@ func (s *Server) ServeOn(port int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	go http.Serve(ln, s.Handler())
+	go newHTTPServer(s.Handler()).Serve(ln)
 	return port, nil
 }
 
@@ -99,7 +113,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/energy/apply", s.apiEnergyApply)
 	mux.HandleFunc("/api/flexikey/state", s.apiFlexikeyState)
 	mux.HandleFunc("/api/flexikey/apply", s.apiFlexikeyApply)
-	return mux
+	return limitBody(mux)
+}
+
+// limitBody 限制请求体大小:超限后读取报错,handler 因此拿不到被撑爆的输入。
+func limitBody(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -228,11 +252,21 @@ func (s *Server) apiPreference(w http.ResponseWriter, r *http.Request) {
 			en, _ := v["enabled"].(bool)
 			st, _ := v["start"].(float64)
 			sp, _ := v["stop"].(float64)
+			mode := battery.ChargerModeOf(en, byte(int(st)), byte(int(sp)))
+			if m, ok := v["mode"].(float64); ok && m >= 0 && m <= 2 {
+				mode = int(m) // 前端显式给出时以它为准(自定义 70/80 不应被降级成"推荐")
+			}
 			s.w.SetFlexiCharger(en, byte(int(st)), byte(int(sp)))
-			if en {
-				s.as.WriteU8(appsettings.AddrFlexiCharger, 1)
-			} else {
-				s.as.WriteU8(appsettings.AddrFlexiCharger, 0)
+			// 302 存模式号(与原版取值 0/1/2 一致);阈值另存用户目录,
+			// 供 ccapp/ccfnkey 启动时回写 EC(冷启动后 EC 的充电控制会被 BIOS 复位)。
+			if err := s.as.WriteU8(appsettings.AddrFlexiCharger, byte(mode)); err != nil {
+				errJSON(w, err)
+				return
+			}
+			if err := battery.SaveChargerPref(battery.ChargerPref{
+				Mode: mode, Start: int(st), Stop: int(sp)}); err != nil {
+				errJSON(w, fmt.Errorf("充电模式已下发但未能记住,重启后会回到原状态: %w", err))
+				return
 			}
 		}
 		if v, ok := req["keyboard"].(map[string]any); ok {
@@ -274,12 +308,16 @@ func (s *Server) apiPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	en, st, sp, stt, spt := s.w.QueryFlexiCharger()
+	mode := battery.ChargerModeOf(en, st, sp)
+	if p, ok := battery.LoadChargerPref(); ok {
+		mode = p.Mode
+	}
 	fn, win, fnw := s.w.QueryKeyboard()
 	gpuCur, gpuSup := s.w.QueryGPUSwitch()
 	writeJSON(w, map[string]any{
 		"ok": true,
 		"flexiCharger": map[string]any{
-			"enabled": en, "start": st, "stop": sp,
+			"enabled": en, "start": st, "stop": sp, "mode": mode,
 			"startTable": nonZero(stt), "stopTable": nonZero(spt),
 		},
 		"keyboard": map[string]any{
@@ -314,7 +352,11 @@ func writeOutSafe(msg string) error { return writeOutImpl(msg) }
 
 // apiFanLive 风扇实时数据(1 秒轮询)。
 func (s *Server) apiFanLive(w http.ResponseWriter, r *http.Request) {
-	live := s.fc.ReadLive()
+	live, err := s.fc.ReadLive()
+	if err != nil {
+		errJSON(w, err)
+		return
+	}
 	mode := s.as.ReadU8(appsettings.AddrFanMode)
 	writeJSON(w, map[string]any{
 		"ok": true,
@@ -668,7 +710,6 @@ func (s *Server) apiBatteryRefresh(w http.ResponseWriter, r *http.Request) {
 		s.batState = &batteryState{}
 	}
 	st := s.batState
-	s.mu.Unlock()
 	switch req.Action {
 	case "start":
 		battery.RefreshCommand(s.w, 1, 0, 1) // 先恢复
@@ -681,20 +722,19 @@ func (s *Server) apiBatteryRefresh(w http.ResponseWriter, r *http.Request) {
 		st.Ongoing = battery.Stop
 		_ = writeOutSafe("clevobattery^207^0")
 	}
-	writeJSON(w, map[string]any{"ok": true, "ongoing": int(st.Ongoing)})
+	ongoing := st.Ongoing
+	s.mu.Unlock()
+	writeJSON(w, map[string]any{"ok": true, "ongoing": int(ongoing)})
 }
 
 // apiEnergySample 功耗采样(GET)。
 func (s *Server) apiEnergySample(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
+	if s.sampler == nil {
+		s.sampler = energysave.NewSampler(s.w)
+	}
 	sampler := s.sampler
 	s.mu.Unlock()
-	if sampler == nil {
-		sampler = energysave.NewSampler(s.w)
-		s.mu.Lock()
-		s.sampler = sampler
-		s.mu.Unlock()
-	}
 	watt := sampler.SampleAC(false)
 	charge, discharge := energysave.AutoChargeLimits(s.w)
 	writeJSON(w, map[string]any{

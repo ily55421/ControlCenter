@@ -2,6 +2,7 @@
 package osdnotifier
 
 import (
+	"runtime"
 	"time"
 
 	"controlcenter/internal/win32"
@@ -29,8 +30,11 @@ func (n *Notifier) Show(text string, barMax, barVal int) {
 	}
 }
 
-// Run 阻塞运行:创建 OSD 窗口,轮询请求并泵消息(同一 goroutine 保证线程亲和)。
+// Run 阻塞运行:创建 OSD 窗口,轮询请求并泵消息。
+// goroutine 不等于线程——GetMessage/DispatchMessage 重排后可能换到别的线程,
+// 窗口与定时器都是线程亲和的,必须锁定当前线程。
 func (n *Notifier) Run() {
+	runtime.LockOSThread()
 	osd, err := win32.NewOSD()
 	if err != nil {
 		return

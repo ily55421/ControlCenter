@@ -2,6 +2,7 @@
 package fan
 
 import (
+	"fmt"
 	"math"
 
 	"controlcenter/internal/appsettings"
@@ -69,8 +70,12 @@ func New(w *wmi.Client, as *appsettings.Store) *Controller { return &Controller{
 var Default = New(wmi.Default, appsettings.Default)
 
 // ReadLive 读取实时数据(GetWMIPackage(12);RPM 原始值换算 2156160/raw;duty 0-255)。
-func (c *Controller) ReadLive() LiveSample {
-	p := c.w.GetPackage(12)
+// 桥接失败返回 error:读不到不能以 RPM=0 冒充真实读数。
+func (c *Controller) ReadLive() (LiveSample, error) {
+	p, err := c.w.GetPackageErr(12)
+	if err != nil {
+		return LiveSample{}, fmt.Errorf("fan: 读风扇实时数据: %w", err)
+	}
 	var s LiveSample
 	raw := func(i int) int { return int(uint16(p[i])<<8 | uint16(p[i+1])) }
 	rpm := func(i int) int {
@@ -92,7 +97,7 @@ func (c *Controller) ReadLive() LiveSample {
 	s.SysFan.RPM = rpm(36)
 	s.SysFan.Duty = int(p[38])
 	s.SysFan.Temp = float64(p[40])
-	return s
+	return s, nil
 }
 
 // Info WMI13 风扇信息。
@@ -306,31 +311,28 @@ func (c *Controller) WriteCustomTable(tables [3]FanTable) error {
 }
 
 // persistFanInfo SetFanInfo:page4 镜像(版本/InitFanMode/FanMode/FanCount/Offset + 表,斜率 LE)。
+// 整页在 Store 锁内完成读→改→写,避免与并发写者互相覆盖。
 func (c *Controller) persistFanInfo(tables [3]FanTable) error {
-	page := make([]byte, 256)
-	copy(page[0:4], c.as.Read(appsettings.AddrFanPage, 4))
-	page[4] = byte(c.as.ReadU8(appsettings.AddrFanPage + 4))
-	page[5] = byte(c.as.ReadU8(appsettings.AddrFanMode))
-	p := c.w.GetPackage(13)
-	page[6] = p[12]
-	page[7] = byte(c.as.ReadU8(appsettings.AddrFanOffset))
-	for fi := 0; fi < 3; fi++ {
-		t := tables[fi]
-		base := 16 + fi*18
-		page[base] = byte(t.D1)
-		page[base+1] = byte(t.D2)
-		page[base+2] = byte(t.D3)
-		page[base+3] = byte(t.D4)
-		page[base+4] = byte(t.D2Def)
-		page[base+5] = byte(t.D3Def)
-		page[base+6] = byte(t.T1)
-		page[base+7] = byte(t.T2)
-		page[base+8] = byte(t.T3)
-		page[base+9] = byte(t.T4)
-		page[base+10] = byte(t.T2Def)
-		page[base+11] = byte(t.T3Def)
-	}
-	return c.as.WriteAt(4, 0, 256, page)
+	fanCount := c.w.GetPackage(13)[12]
+	return c.as.WithPage(4, func(page []byte) {
+		page[6] = fanCount
+		for fi := 0; fi < 3; fi++ {
+			t := tables[fi]
+			base := 16 + fi*18
+			page[base] = byte(t.D1)
+			page[base+1] = byte(t.D2)
+			page[base+2] = byte(t.D3)
+			page[base+3] = byte(t.D4)
+			page[base+4] = byte(t.D2Def)
+			page[base+5] = byte(t.D3Def)
+			page[base+6] = byte(t.T1)
+			page[base+7] = byte(t.T2)
+			page[base+8] = byte(t.T3)
+			page[base+9] = byte(t.T4)
+			page[base+10] = byte(t.T2Def)
+			page[base+11] = byte(t.T3Def)
+		}
+	})
 }
 
 // ReadCustomTable 从 page4 读取三点表。

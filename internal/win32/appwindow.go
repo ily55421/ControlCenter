@@ -39,6 +39,8 @@ func OpenAppWindow(url string) bool {
 	if exe := FindAppBrowser(); exe != "" {
 		cmd := exec.Command(exe, "--app="+url, "--window-size=1280,820")
 		if err := cmd.Start(); err == nil {
+			// 不 Wait 会泄漏进程句柄;浏览器窗口自行存活,后台回收即可
+			go func() { _ = cmd.Wait() }()
 			return true
 		}
 	}

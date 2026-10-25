@@ -3,6 +3,7 @@ package win32
 
 import (
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -62,7 +63,9 @@ type SimpleWindow struct {
 }
 
 // NewSimpleWindow 创建窗口(标题/尺寸);阻塞调用 Run() 进入消息循环。
+// 与 Run 必须同 goroutine 且锁定线程(窗口句柄线程亲和)。
 func NewSimpleWindow(title string, width, height int) (*SimpleWindow, error) {
+	runtime.LockOSThread()
 	guiInit()
 	w := &SimpleWindow{controls: map[int]windows.HWND{}, onCommand: map[int]func(){}}
 	className, _ := windows.UTF16PtrFromString("ControlCenterGUIWnd")
@@ -171,6 +174,7 @@ func (w *SimpleWindow) Show() {
 
 // Run 阻塞消息循环。
 func (w *SimpleWindow) Run() {
+	runtime.LockOSThread()
 	var m msg
 	for {
 		r, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)

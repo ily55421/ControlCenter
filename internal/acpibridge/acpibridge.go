@@ -44,7 +44,8 @@ const (
 // ErrNoDevice 表示找不到 ACPI 桥设备接口(驱动未安装或未加载)。
 var ErrNoDevice = errors.New("acpibridge: 未找到 ACPI 桥设备接口(请确认 AcpiBridge 驱动已安装)")
 
-// Bridge 维护与驱动的单连接。所有方法并发安全。
+// Bridge 维护与驱动的单连接。EC 是一条串行通道,故全部 IOCTL 在 mu 下
+// 整段执行(open + DeviceIoControl),并发调用方依次排队,与原生 DLL 行为一致。
 type Bridge struct {
 	mu   sync.Mutex
 	dev  windows.Handle
@@ -77,10 +78,8 @@ func DevicePath() (string, error) {
 	return s, nil
 }
 
-// open 打开(或复用)设备句柄。
-func (b *Bridge) open() (windows.Handle, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+// openLocked 打开(或复用)设备句柄。调用方必须持有 b.mu。
+func (b *Bridge) openLocked() (windows.Handle, error) {
 	if b.dev != windows.InvalidHandle && b.dev != 0 {
 		return b.dev, nil
 	}
@@ -113,7 +112,7 @@ func (b *Bridge) open() (windows.Handle, error) {
 	return h, nil
 }
 
-// Close 关闭设备句柄。
+// Close 关闭设备句柄(与在途 IOCTL 互斥,不会抽走正在使用的句柄)。
 func (b *Bridge) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -123,6 +122,14 @@ func (b *Bridge) Close() error {
 	err := windows.CloseHandle(b.dev)
 	b.dev = windows.InvalidHandle
 	return err
+}
+
+// slicePtr 返回切片首地址;空切片返回 nil(驱动按长度 0 处理)。
+func slicePtr(b []byte) *byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return &b[0]
 }
 
 // buildWMIInput 构造 0x420 字节的 WMI 求值输入结构。
@@ -156,6 +163,11 @@ func parseWMIOutput(out []byte) ([]wmiEntry, error) {
 		return nil, errors.New("acpibridge: WMI 输出过短")
 	}
 	count := binary.LittleEndian.Uint32(out[8:12])
+	// count 由驱动缓冲给出:先按容量钳制上限(每条至少 4 字节头 + 4 字节数据),
+	// 否则畸形 count 会让 make 直接触发不可 recover 的 out-of-memory。
+	if max := uint32((len(out) - 0xC) / 8); count > max {
+		count = max
+	}
 	entries := make([]wmiEntry, 0, count)
 	off := uint32(0xC)
 	for i := uint32(0); i < count; i++ {
@@ -182,15 +194,17 @@ func parseWMIOutput(out []byte) ([]wmiEntry, error) {
 }
 
 func (b *Bridge) deviceIoControl(code uint32, in []byte, out []byte) error {
-	h, err := b.open()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h, err := b.openLocked()
 	if err != nil {
 		return err
 	}
 	var ret uint32
 	err = windows.DeviceIoControl(
 		h, code,
-		(*byte)(unsafe.Pointer(&in[0])), uint32(len(in)),
-		(*byte)(unsafe.Pointer(&out[0])), uint32(len(out)),
+		slicePtr(in), uint32(len(in)),
+		slicePtr(out), uint32(len(out)),
 		&ret, nil,
 	)
 	if err != nil {
@@ -218,7 +232,7 @@ func (b *Bridge) GetInt(command int) (int, error) {
 }
 
 // GetBuffer 等价 GetDCHU_Data_Buffer:读取 256 字节 WMI 包(type==2 条目数据)。
-// 失败时返回全零数组(与原生 DLL 行为一致:异常被吞)。
+// 失败返回全零数组(与原生 DLL 行为一致),但把原因一并返回,调用方得以区分"读到 0"与"没读到"。
 func (b *Bridge) GetBuffer(command int) ([]byte, error) {
 	buf := make([]byte, 256)
 	out, err := b.exchange(command, nil)
@@ -229,6 +243,7 @@ func (b *Bridge) GetBuffer(command int) ([]byte, error) {
 	if err != nil {
 		return buf, err
 	}
+	found := false
 	for _, e := range entries {
 		if e.Type == 2 {
 			n := len(e.Data)
@@ -236,7 +251,11 @@ func (b *Bridge) GetBuffer(command int) ([]byte, error) {
 				n = 256
 			}
 			copy(buf[:n], e.Data[:n])
+			found = true
 		}
+	}
+	if !found {
+		return buf, fmt.Errorf("acpibridge: GetBuffer(%d): 输出无缓冲条目", command)
 	}
 	return buf, nil
 }

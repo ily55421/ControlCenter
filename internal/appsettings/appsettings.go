@@ -10,9 +10,16 @@ import (
 	"controlcenter/internal/acpibridge"
 )
 
+// access 是桥驱动设置区的最小子集(便于以假实现单测读改写原子性)。
+type access interface {
+	ReadAppSettings(page, offset, length int) ([]byte, error)
+	WriteAppSettings(page, offset, length int, data []byte) error
+}
+
 // Store 在桥之上提供线程安全的类型化设置访问。
+// mu 覆盖单次访问,以及"读旧值→改→写回"这类复合操作(UpdateU8/WithPage)。
 type Store struct {
-	b  *acpibridge.Bridge
+	b  access
 	mu sync.Mutex
 }
 
@@ -24,6 +31,12 @@ var Default = New(acpibridge.Default())
 
 // Read 读取切片(失败返回全零,与原生行为一致)。
 func (s *Store) Read(index, length int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readLocked(index, length)
+}
+
+func (s *Store) readLocked(index, length int) []byte {
 	out, _ := s.b.ReadAppSettings(index/256, index%256, length)
 	if len(out) < length {
 		o := make([]byte, length)
@@ -35,6 +48,8 @@ func (s *Store) Read(index, length int) []byte {
 
 // ReadAt 页/偏移版本。
 func (s *Store) ReadAt(page, offset, length int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out, _ := s.b.ReadAppSettings(page, offset, length)
 	if len(out) < length {
 		o := make([]byte, length)
@@ -46,12 +61,42 @@ func (s *Store) ReadAt(page, offset, length int) []byte {
 
 // Write 写入。
 func (s *Store) Write(index, length int, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.b.WriteAppSettings(index/256, index%256, length, data)
 }
 
 // WriteAt 页/偏移版本。
 func (s *Store) WriteAt(page, offset, length int, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.b.WriteAppSettings(page, offset, length, data)
+}
+
+// UpdateU8 原子地完成"读 1 字节 → f(旧值) → 写回 1 字节",
+// 避免并发切换同一字节内其它位时丢失更新。
+func (s *Store) UpdateU8(index int, f func(cur byte) byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.readLocked(index, 1)
+	return s.b.WriteAppSettings(index/256, index%256, 1, []byte{f(cur[0])})
+}
+
+// WithPage 原子地完成"读整页 → edit 就地修改 → 写回整页"(page 0..15)。
+func (s *Store) WithPage(page int, edit func(pg []byte)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pg, err := s.b.ReadAppSettings(page, 0, 256)
+	if err != nil {
+		return err
+	}
+	if len(pg) < 256 {
+		full := make([]byte, 256)
+		copy(full, pg)
+		pg = full
+	}
+	edit(pg)
+	return s.b.WriteAppSettings(page, 0, 256, pg)
 }
 
 // --- 类型化便捷访问 ---

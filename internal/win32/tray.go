@@ -2,6 +2,7 @@
 package win32
 
 import (
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -64,7 +65,12 @@ var (
 	procCreateIconInd = moduser32.NewProc("CreateIconIndirect")
 	procCheckMenu     = moduser32.NewProc("CheckMenuItem")
 	procSetMenuInfo   = moduser32.NewProc("SetMenuInfo")
+	procDestroyMenu   = moduser32.NewProc("DestroyMenu")
+	procGetCursorPos  = moduser32.NewProc("GetCursorPos")
 )
+
+// point 对应 Win32 POINT。
+type point struct{ X, Y int32 }
 
 type wndClassEx struct {
 	Size, Style         uint32
@@ -118,7 +124,10 @@ type iconInfo struct {
 }
 
 // NewTray 创建托盘(生成 ARGB 图标)。
+// 窗口句柄与消息循环必须同在一条 OS 线程上,故在此锁定当前 goroutine 的线程;
+// 调用方须与 RunMessageLoop 使用同一 goroutine。
 func NewTray(tip string, iconARGB []byte, width, height int) (*Tray, error) {
+	runtime.LockOSThread()
 	t := &Tray{commands: map[int]func(){}}
 	// 窗口类
 	className, _ := windows.UTF16PtrFromString("ControlCenterTrayWnd")
@@ -161,8 +170,12 @@ func (t *Tray) SetIcon(iconARGB []byte, width, height int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	icon := createARGBIcon(iconARGB, width, height)
+	old := t.nid.Icon
 	t.nid.Icon = icon
 	procShellNotify.Call(nimModify, uintptr(unsafe.Pointer(&t.nid)))
+	if old != 0 && old != windows.InvalidHandle {
+		procDeleteObject.Call(uintptr(old))
+	}
 }
 
 // SetTip 更新悬浮提示。
@@ -193,7 +206,11 @@ func (t *Tray) SetMenu(items []MenuItem) {
 }
 
 // SetOnClick 左键单击回调。
-func (t *Tray) SetOnClick(fn func()) { t.onClick = fn }
+func (t *Tray) SetOnClick(fn func()) {
+	t.mu.Lock()
+	t.onClick = fn
+	t.mu.Unlock()
+}
 
 // OnCommand 注册菜单命令。
 func (t *Tray) OnCommand(id int, fn func()) {
@@ -208,21 +225,18 @@ func (t *Tray) wndProc(hwnd windows.HWND, msg uint32, wParam, lParam uintptr) ui
 	case wmTrayIcon:
 		switch uint32(lParam) {
 		case wmLButtonUp:
-			if t.onClick != nil {
-				go t.onClick()
+			t.mu.Lock()
+			fn := t.onClick
+			t.mu.Unlock()
+			if fn != nil {
+				go fn()
 			}
 		case wmRButtonUp, wmRButtonDown, 0x0203:
 			t.showMenu()
 		}
 		return 0
 	case wmCommand:
-		id := int(wParam & 0xFFFF)
-		t.mu.Lock()
-		fn := t.commands[id]
-		t.mu.Unlock()
-		if fn != nil {
-			go fn()
-		}
+		t.runCommand(int(wParam & 0xFFFF))
 		return 0
 	case wmDestroy:
 		procPostQuit.Call(0)
@@ -232,15 +246,19 @@ func (t *Tray) wndProc(hwnd windows.HWND, msg uint32, wParam, lParam uintptr) ui
 	return r
 }
 
-// showMenu 弹出上下文菜单。
+// showMenu 在光标处弹出上下文菜单。
+// TrackPopupMenuEx 签名:(hMenu, uFlags, x, y, hWnd, lppma) 共 6 参。
+// 用 TPM_RETURNCMD 时系统不发 WM_COMMAND,选中项由返回值给出。
 func (t *Tray) showMenu() {
 	t.mu.Lock()
 	menu := t.menu
+	hwnd := t.hwnd
 	t.mu.Unlock()
 	hmenu, _, _ := procCreateMenu.Call() // CreatePopupMenu
 	if hmenu == 0 {
 		return
 	}
+	defer procDestroyMenu.Call(hmenu)
 	const ( mfString = 0; mfSeparator = 0x800; mfChecked = 8; mfDisabled = 2; mfBold = 0x10 )
 	for _, it := range menu {
 		if it.Separator {
@@ -260,13 +278,33 @@ func (t *Tray) showMenu() {
 		txt, _ := windows.UTF16PtrFromString(it.Text)
 		procAppendMenu.Call(hmenu, flags, uintptr(it.ID), uintptr(unsafe.Pointer(txt)))
 	}
-	procSetForeground.Call(uintptr(t.hwnd))
+	procSetForeground.Call(uintptr(hwnd))
+	// MSDN 要求:托盘菜单前置窗口后补发一条空消息,否则菜单在点击别处时不会关闭
+	procSendMessageW.Call(uintptr(hwnd), 0, 0, 0)
+	var pt point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 	const ( tpmRightAlign = 0x8; tpmBottomAlign = 0x20; tpmRetCmd = 0x100 )
-	procTrackPopup.Call(hmenu, tpmRightAlign|tpmBottomAlign|tpmRetCmd, 0, 0, 0, uintptr(t.hwnd), 0)
+	r, _, _ := procTrackPopup.Call(hmenu,
+		tpmRightAlign|tpmBottomAlign|tpmRetCmd,
+		uintptr(pt.X), uintptr(pt.Y), uintptr(hwnd), 0)
+	if cmd := int(int32(r)); cmd > 0 {
+		t.runCommand(cmd)
+	}
 }
 
-// RunMessageLoop 阻塞运行消息循环(应在主 goroutine)。
+// runCommand 执行菜单命令回调。
+func (t *Tray) runCommand(id int) {
+	t.mu.Lock()
+	fn := t.commands[id]
+	t.mu.Unlock()
+	if fn != nil {
+		go fn()
+	}
+}
+
+// RunMessageLoop 阻塞运行消息循环(与 NewTray 同 goroutine)。
 func (t *Tray) RunMessageLoop() {
+	runtime.LockOSThread()
 	var m msg
 	for {
 		r, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
@@ -283,6 +321,10 @@ func (t *Tray) Remove() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	procShellNotify.Call(nimDelete, uintptr(unsafe.Pointer(&t.nid)))
+	if t.nid.Icon != 0 && t.nid.Icon != windows.InvalidHandle {
+		procDeleteObject.Call(uintptr(t.nid.Icon))
+		t.nid.Icon = 0
+	}
 	if t.hwnd != 0 {
 		procDestroyWindow.Call(uintptr(t.hwnd))
 	}
@@ -310,6 +352,9 @@ func createARGBIcon(argb []byte, w, h int) windows.Handle {
 	maskBmp := createBitmap(mask, 1, w, h)
 	ii := iconInfo{FIcon: 1, HbmColor: bmp, HbmMask: maskBmp}
 	iconH, _, _ := procCreateIconInd.Call(uintptr(unsafe.Pointer(&ii)))
+	// CreateIconIndirect 已复制两张位图,原句柄必须释放(GDI 对象配额很小)
+	procDeleteObject.Call(uintptr(bmp))
+	procDeleteObject.Call(uintptr(maskBmp))
 	return windows.Handle(iconH)
 }
 

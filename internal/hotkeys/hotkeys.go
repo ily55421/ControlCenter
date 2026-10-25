@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"controlcenter/internal/appsettings"
+	"controlcenter/internal/battery"
 	"controlcenter/internal/eventbus"
 	"controlcenter/internal/fan"
 	"controlcenter/internal/keyboard"
@@ -138,12 +139,18 @@ func (d *Dispatcher) Dispatch(value uint64) {
 		} else {
 			d.osd.Show("3G ON", 0, 0)
 		}
-	case 240, 241: // FlexiCharger 启停
+	case 240, 241: // FlexiCharger 启停:EC 侧已切换,这里同步"记住的选择"以便开机回写
+		mode, start, stop := battery.ChargerMaxBattery, 95, 100
+		if event == 241 {
+			en, st, sp, _, _ := d.w.QueryFlexiCharger()
+			mode = battery.ChargerModeOf(en, st, sp)
+			start, stop = int(st), int(sp)
+		}
+		_ = d.as.WriteU8(appsettings.AddrFlexiCharger, byte(mode))
+		_ = battery.SaveChargerPref(battery.ChargerPref{Mode: mode, Start: start, Stop: stop})
 		if event == 240 {
-			d.as.WriteU8(appsettings.AddrFlexiCharger, 0)
 			d.osd.Show("FLEXICHARGER STOP", 0, 0)
 		} else {
-			d.as.WriteU8(appsettings.AddrFlexiCharger, 1)
 			d.osd.Show("FLEXICHARGER START", 0, 0)
 		}
 	case 246, 247, 248, 249: // 摄像头
@@ -347,11 +354,31 @@ func (d *Dispatcher) setBrightnessFromWMI17(byteIdx int) {
 }
 
 func (d *Dispatcher) checkBatteryTemp() {
-	r := d.w.RWEC(223, [5]byte{12, 90, 22, 8, 0})
-	temp := (int(uint16(r[1])<<8|uint16(r[0])) - 2732) / 10
+	r, err := d.w.TryRWEC(223, [5]byte{12, 90, 22, 8, 0})
+	if err != nil {
+		log.Printf("hotkeys: 读电池温度失败: %v", err)
+		return
+	}
+	temp, ok := batteryTemp(r)
+	if !ok {
+		return // 读数不在物理量程内(含全零),不能当真实温度用来报警
+	}
 	if temp < 11 {
 		d.osd.Show("BATTERY LOW TEMPERATURE", 0, 0)
 	}
+}
+
+// batteryTemp 解析 EC 电池温度(0.1K 定点,小端);raw 为 0 或结果超出物理量程视为无效。
+func batteryTemp(r [5]byte) (int, bool) {
+	raw := int(uint16(r[1])<<8 | uint16(r[0]))
+	if raw == 0 {
+		return 0, false
+	}
+	t := (raw - 2732) / 10
+	if t < -30 || t > 120 {
+		return 0, false
+	}
+	return t, true
 }
 
 func (d *Dispatcher) lidAction() {

@@ -236,10 +236,14 @@ func onDiagnose() {
 		log("WMI96=%#x  WMI122=%#x", w.GetInt(96), w.GetInt(122))
 		p17 := w.GetPackage(17)
 		log("WMI17: 客户=%d 皮肤=(%d,%d,%d)", p17[2], p17[3], p17[4], p17[5])
-		live := fan.Default.ReadLive()
-		log("风扇: CPU %dRPM/%d%%/%.0f℃  GPU1 %dRPM/%d%%/%.0f℃",
-			live.Fan.RPM, live.Fan.Duty*100/255, live.Fan.Temp,
-			live.GPU1.RPM, live.GPU1.Duty*100/255, live.GPU1.Temp)
+		live, err := fan.Default.ReadLive()
+		if err != nil {
+			log("风扇实时读取失败: %v", err)
+		} else {
+			log("风扇: CPU %dRPM/%d%%/%.0f℃  GPU1 %dRPM/%d%%/%.0f℃",
+				live.Fan.RPM, live.Fan.Duty*100/255, live.Fan.Temp,
+				live.GPU1.RPM, live.GPU1.Duty*100/255, live.GPU1.Temp)
+		}
 		log("键盘灯类型: %d", keyboard.Default.Type())
 		t := smbios.Get()
 		log("SMBIOS: %s %s · BIOS %s · %s",

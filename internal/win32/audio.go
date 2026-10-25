@@ -6,6 +6,7 @@ package win32
 
 import (
 	"fmt"
+	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -62,6 +63,18 @@ func hresultErr(r uintptr, what string) error {
 func coInit() bool {
 	hr, _, _ := procCoInitEx.Call(0, coinitApartmentThreaded)
 	return int32(hr) >= 0 || uint32(hr) == rpcEChangedMode
+}
+
+// onCOMThread 在一条独占的锁定线程上执行 fn。
+// CoInitializeEx/CoUninitialize 必须成对发生在同一线程,而 goroutine 在 syscall
+// 阻塞后可能被重新调度到别的线程;goroutine 结束时其线程随之销毁,STA 干净退出。
+func onCOMThread(fn func() error) error {
+	ch := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		ch <- fn()
+	}()
+	return <-ch
 }
 
 // defaultCaptureEndpoint 返回默认麦克风 IMMDevice(调用方负责 Release)。
@@ -127,41 +140,51 @@ func micVolume() (unsafe.Pointer, func(), error) {
 
 // MicMuted 查询麦克风当前静音状态。
 func MicMuted() (bool, error) {
-	vol, done, err := micVolume()
+	var muted bool
+	err := onCOMThread(func() error {
+		vol, done, err := micVolume()
+		if err != nil {
+			return err
+		}
+		defer done()
+		vt, err := vtableOf(vol)
+		if err != nil {
+			return err
+		}
+		var m int32
+		// IAudioEndpointVolume vtable: 3 RegisterControlChangeNotify … 14 SetMute, 15 GetMute
+		r, _, _ := syscall.SyscallN(vt[15], uintptr(vol), uintptr(unsafe.Pointer(&m)))
+		if err := hresultErr(r, "GetMute"); err != nil {
+			return err
+		}
+		muted = m != 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	defer done()
-	vt, err := vtableOf(vol)
-	if err != nil {
-		return false, err
-	}
-	var muted int32
-	// IAudioEndpointVolume vtable: 3 RegisterControlChangeNotify … 14 SetMute, 15 GetMute
-	r, _, _ := syscall.SyscallN(vt[15], uintptr(vol), uintptr(unsafe.Pointer(&muted)))
-	if err := hresultErr(r, "GetMute"); err != nil {
-		return false, err
-	}
-	return muted != 0, nil
+	return muted, nil
 }
 
 // SetMicMute 设置麦克风静音(true=静音)。
 func SetMicMute(mute bool) error {
-	vol, done, err := micVolume()
-	if err != nil {
-		return err
-	}
-	defer done()
-	vt, err := vtableOf(vol)
-	if err != nil {
-		return err
-	}
-	m := uintptr(0)
-	if mute {
-		m = 1
-	}
-	r, _, _ := syscall.SyscallN(vt[14], uintptr(vol), m, 0) // SetMute(mute, ctx=NULL)
-	return hresultErr(r, "SetMute")
+	return onCOMThread(func() error {
+		vol, done, err := micVolume()
+		if err != nil {
+			return err
+		}
+		defer done()
+		vt, err := vtableOf(vol)
+		if err != nil {
+			return err
+		}
+		m := uintptr(0)
+		if mute {
+			m = 1
+		}
+		r, _, _ := syscall.SyscallN(vt[14], uintptr(vol), m, 0) // SetMute(mute, ctx=NULL)
+		return hresultErr(r, "SetMute")
+	})
 }
 
 // ToggleMicMute 翻转麦克风静音,返回翻转后的状态(true=已静音)。

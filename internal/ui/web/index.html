@@ -453,7 +453,7 @@ window.fkDisable=fkDisable;
 async function loadCharger(){
  const p=await api("preference");const b=await api("battery");
  const fc=p.flexiCharger;const en=fc.enabled;
- const mode=!en?0:(fc.start===70&&fc.stop===80?1:2);
+ const mode=(typeof fc.mode==="number")?fc.mode:(!en?0:(fc.start===70&&fc.stop===80?1:2));
  const pct=b.data.capacityPct||0;const hasBat=b.data.design>0;
  $("#page-charger").innerHTML=`
  <div class="grid" style="grid-template-columns:minmax(320px,5fr) minmax(300px,4fr);gap:16px;align-items:start">
@@ -471,7 +471,7 @@ async function loadCharger(){
      <input type="range" min="60" max="100" value="${fc.stop}" id="fc-stop" oninput="$('#fc-p').textContent=this.value"></div>
    </div>
    <div class="row" style="margin-top:10px"><button class="act pri" onclick="fcApply()"><span>应用</span></button>
-    <span class="hint">下发:WMI4 sub31 {31,enable,start,stop}</span></div>`)}
+    <span class="hint">下发:WMI4 sub31 {31,enable,start,stop} · 记住选择,开机自动回写 EC</span></div>`)}
   </div>
   <div>${panel("电池状态",`
    <div class="plug">${hasBat?"⌁ 已插入电源":"— 本机无电池管理支持位 —"}</div>
@@ -484,14 +484,14 @@ async function loadCharger(){
  window._fcMode=mode;
 }
 function fcMode(m){window._fcMode=m;
- if(m===0){fcSend(false,95,100)}
- else if(m===1){fcSend(true,70,80)}
+ if(m===0){fcSend(false,95,100,0)}
+ else if(m===1){fcSend(true,70,80,1)}
  else{toast("自定义:调整后点击应用")}}
 window.fcMode=fcMode;
-async function fcSend(en,s,p){try{await api("preference",{flexiCharger:{enabled:en,start:s,stop:p}});toast("FlexiCharger 已下发");setTimeout(loadCharger,400)}catch(e){toast(e.message)}}
+async function fcSend(en,s,p,m){try{await api("preference",{flexiCharger:{mode:m,enabled:en,start:s,stop:p}});toast("FlexiCharger 已下发并记住");setTimeout(loadCharger,400)}catch(e){toast(e.message)}}
 async function fcApply(){const m=window._fcMode;
- if(m===2){await fcSend(true,+$("#fc-start").value,+$("#fc-stop").value)}
- else if(m===1){await fcSend(true,70,80)}else{await fcSend(false,95,100)}}
+ if(m===2){await fcSend(true,+$("#fc-start").value,+$("#fc-stop").value,2)}
+ else if(m===1){await fcSend(true,70,80,1)}else{await fcSend(false,95,100,0)}}
 window.fcApply=fcApply;
 /* ================= CPU 超频 ================= */
 async function loadCPU(){

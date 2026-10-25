@@ -12,6 +12,7 @@ import (
 
 	"controlcenter/internal/acpibridge"
 	"controlcenter/internal/appsettings"
+	"controlcenter/internal/battery"
 	"controlcenter/internal/eventbus"
 	"controlcenter/internal/fan"
 	"controlcenter/internal/gpu"
@@ -45,6 +46,13 @@ func main() {
 
 	exe, _ := os.Executable()
 	pm.ControlGPUPath = findControlGPU(filepath.Dir(exe))
+
+	// 开机回写充电模式(ccapp 若已先跑过则此处为幂等空操作)
+	if applied, err := battery.RestoreCharger(w); err != nil {
+		log.Printf("FlexiCharger 回写失败: %v", err)
+	} else if applied {
+		log.Printf("FlexiCharger 已按记忆回写 EC")
+	}
 
 	// OSD(独立线程的消息循环)
 	osdSvc := osdnotifier.New()

@@ -81,3 +81,42 @@ func TestParseWMIOutput(t *testing.T) {
 		t.Fatalf("零尺寸条目解析错误: %+v", entries[2])
 	}
 }
+
+// TestParseWMIOutputClampsBogusCount count 来自驱动缓冲,畸形值不得触发不可 recover
+// 的巨型分配,也不得越界读取。
+func TestParseWMIOutputClampsBogusCount(t *testing.T) {
+	out := make([]byte, 0x40C)
+	binary.LittleEndian.PutUint32(out[8:12], 0xFFFFFFFF)
+	binary.LittleEndian.PutUint16(out[0xC:], 0)
+	binary.LittleEndian.PutUint16(out[0xE:], 4)
+	binary.LittleEndian.PutUint32(out[0x10:], 42)
+
+	entries, err := parseWMIOutput(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("合法的首个条目未被解析")
+	}
+	if got := binary.LittleEndian.Uint32(entries[0].Data); got != 42 {
+		t.Fatalf("首个条目值 = %d, 期望 42", got)
+	}
+	if max := (len(out) - 0xC) / 8; len(entries) > max {
+		t.Fatalf("条目数 %d 超出缓冲容量上限 %d", len(entries), max)
+	}
+}
+
+// TestParseWMIOutputTruncatedBuffer 尾部被截断的条目取剩余数据即可,不得越界 panic。
+func TestParseWMIOutputTruncatedBuffer(t *testing.T) {
+	out := make([]byte, 0x14) // 仅够 1 个头 + 4 字节数据
+	binary.LittleEndian.PutUint32(out[8:12], 2)
+	binary.LittleEndian.PutUint16(out[0xC:], 2)
+	binary.LittleEndian.PutUint16(out[0xE:], 0x400) // 声称 1KB 数据,实际只剩 4 字节
+	entries, err := parseWMIOutput(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || len(entries[0].Data) != 4 {
+		t.Fatalf("截断处理错误: %+v", entries)
+	}
+}

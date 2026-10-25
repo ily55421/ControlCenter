@@ -38,6 +38,12 @@ func (c *Client) GetPackage(command int) []byte {
 	return v
 }
 
+// GetPackageErr 同 GetPackage,但透传桥接错误:
+// 调用方需要区分"传感器真的是 0"与"这次没读到"时使用。
+func (c *Client) GetPackageErr(command int) ([]byte, error) {
+	return c.b.GetBuffer(command)
+}
+
 // encodeSetWMI 构造 SetWMI 的 256 字节缓冲:data 低 3 字节 + 子命令在 byte[3]。
 func encodeSetWMI(subCommand int, data uint32) []byte {
 	buf := make([]byte, 256)
@@ -99,14 +105,23 @@ func (c *Client) SetWMIPackageEx(command int, in []byte) []byte {
 
 // RWEC EC RAM 直访(WMI4 子命令 1):in={1,d0..d4,CMD},返回 out[1..5]。
 func (c *Client) RWEC(ecCmd byte, data [5]byte) [5]byte {
+	r, _ := c.TryRWEC(ecCmd, data)
+	return r
+}
+
+// TryRWEC 同 RWEC,但透传桥接错误:全零返回值可能只是"没读到",不该被当成真实读数。
+func (c *Client) TryRWEC(ecCmd byte, data [5]byte) ([5]byte, error) {
 	in := make([]byte, 256)
 	in[0] = 1
 	copy(in[1:6], data[:])
 	in[6] = ecCmd
-	out := c.SetWMIPackageEx(4, in)
+	out, err := c.b.SetDataEx(4, in)
 	var r [5]byte
+	if err != nil {
+		return r, err
+	}
 	copy(r[:], out[1:6])
-	return r
+	return r, nil
 }
 
 // ReadECRAM 读 EC RAM(WMI4 sub1 + EC 命令 177)。

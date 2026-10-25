@@ -54,13 +54,18 @@ ACPIBIOS_EVENT = {6076EF27-160E-4686-35E5-924A50B4DEAA}
 
 ```
 +0x00  WORD type    0 = 整数(数据为 DWORD,位于 +0x04)
-                  2 = 缓冲(数据为 size-4 字节,位于 +0x04)
-+0x02  WORD size   含 4 字节头的总长度
+                  2 = 缓冲(数据为 size 字节,位于 +0x04)
++0x02  WORD size   数据长度(不含 4 字节头)
 +0x04  …    data
 ```
 
-遍历规则(与原生 DLL 一致):`entrySize = max(4, size)`,下一条目 = 当前 + entrySize。
+遍历规则(与原生 DLL 一致):`dataLen = max(4, size)`,下一条目 = 当前 + 4 + dataLen。
 `GetDCHU_Data_Integer` 取第一个 type==0 条目的 DWORD;`GetDCHU_Data_Buffer` 把 type==2 条目的数据逐字节拷入调用方缓冲(256 字节)。
+
+> 真机佐证(COLORFUL P16 Pro IXA1,`wmitest -probe=16/12`):整数条目 `size=0x0004` 且 `+0x04` 处确实带回 4 字节值
+> (WMI16 = 0x89f);缓冲条目 `size=0x0100`,正好是 256 字节 WMI 包(WMI12/17)。
+> 若把 `size` 解释为"含 4 字节头",前者数据长度会变成 0(读不到值)、后者只剩 252 字节,均与实测矛盾——
+> 故 `size` 为纯数据长度。本机全部只读命令 `count==1`,多条目遍历暂无硬件覆盖,但按本语义自洽。
 
 ### SetWMI 编码(Clevo 约定)
 

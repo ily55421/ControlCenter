@@ -13,6 +13,7 @@ import (
 	"controlcenter/internal/launcher"
 
 	"controlcenter/internal/appsettings"
+	"controlcenter/internal/battery"
 	"controlcenter/internal/cpuoc"
 	"controlcenter/internal/eventbus"
 	"controlcenter/internal/fan"
@@ -53,6 +54,13 @@ func main() {
 	_ = as.WriteU8(appsettings.AddrCC30Launch, 1)
 
 	ui.SetEventWriter(eventbus.WriteOut)
+
+	// 开机回写充电模式:EC 的充电控制寄存器冷启动会被 BIOS 复位,按记忆重新下发。
+	if applied, err := battery.RestoreCharger(w); err != nil {
+		log.Printf("FlexiCharger 回写失败: %v", err)
+	} else if applied {
+		log.Printf("FlexiCharger 已按记忆回写 EC")
+	}
 
 	srv := ui.New(w, as, kb, fc, pm)
 	// GPU OC 应用通道:探测 ControlGPU.exe(与 ccfnkey 同约定)

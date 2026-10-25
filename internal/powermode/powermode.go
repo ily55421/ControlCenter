@@ -2,6 +2,8 @@
 package powermode
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 
@@ -223,11 +225,14 @@ func (e *Engine) NextModeFor(cur appsettings.ModeType) appsettings.ModeType {
 }
 
 // setPowerMode 核心下发:写 (1,1) + WMI(121,25,data)。
-func (e *Engine) setPowerMode(m appsettings.ModeType) {
-	_ = e.as.SetPowerModeOnly(m)
+func (e *Engine) setPowerMode(m appsettings.ModeType) error {
+	if err := e.as.SetPowerModeOnly(m); err != nil {
+		return fmt.Errorf("写模式字节: %w", err)
+	}
+	var d uint32
 	switch m {
 	case appsettings.Performance:
-		d := 2
+		d = 2
 		if e.as.ReadU8(appsettings.AddrDTT) == 1 {
 			if isDTTDriverInstalled() {
 				d |= 0x80
@@ -238,12 +243,15 @@ func (e *Engine) setPowerMode(m appsettings.ModeType) {
 		if e.as.ReadU8(appsettings.AddrTurboFan) == 1 {
 			d |= 0x40
 		}
-		_ = e.w.SetWMI(121, 25, uint32(d))
 	case appsettings.QuietPlus:
-		_ = e.w.SetWMI(121, 25, 0)
+		d = 0
 	default:
-		_ = e.w.SetWMI(121, 25, uint32(m))
+		d = uint32(m)
 	}
+	if err := e.w.SetWMI(121, 25, d); err != nil {
+		return fmt.Errorf("WMI(121,25,%d): %w", d, err)
+	}
+	return nil
 }
 
 func isDTTDriverInstalled() bool {
@@ -255,14 +263,19 @@ func isDTTDriverInstalled() bool {
 	return win32.ServiceExists("esifsvc") || win32.ServiceExists("intel_dptf_service")
 }
 
-// Change 完整切换序列(阻塞执行;重复调用排队)。
-func (e *Engine) Change(m appsettings.ModeType) {
+// Change 完整切换序列(阻塞执行)。
+// 逐步记录失败并以 errors.Join 返回;核心下发失败时把模式字节回滚为切换前的值并中止,
+// 避免模式字节与 EC 实际状态长期不一致。EC 侧无撤销命令,后续联动步骤失败只能上报不能回退。
+func (e *Engine) Change(m appsettings.ModeType) error {
 	e.mu.Lock()
 	if e.ongoing {
 		e.mu.Unlock()
-		return
+		err := fmt.Errorf("powermode: 上一次切换仍在进行,忽略切到 %d 的请求", int(m))
+		log.Print(err.Error())
+		return err
 	}
 	e.ongoing = true
+	callbacks := append([]func(appsettings.ModeType, appsettings.ModeType){}, e.onChanged...)
 	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()
@@ -271,39 +284,55 @@ func (e *Engine) Change(m appsettings.ModeType) {
 	}()
 
 	pre := e.as.GetPowerMode()
+	var fails []error
+	fail := func(step string, err error) {
+		if err == nil {
+			return
+		}
+		log.Printf("powermode: 步骤 %s 失败: %v", step, err)
+		fails = append(fails, fmt.Errorf("%s: %w", step, err))
+	}
 
 	// 1. NV 独显上电联动
 	if e.Sup.NVIDIAPowerOff && (m == appsettings.Performance || m == appsettings.Entertainment) {
 		if e.gpuStore != nil {
 			if _, _, ready, _ := e.gpuStore.Info(); !ready {
-				_ = eventbus.ExecCommand(`C:\Program Files (x86)\ControlCenter\DCHU\cc30wk.exe 0x0013 1`)
+				fail("NV 上电", eventbus.ExecCommand(`C:\Program Files (x86)\ControlCenter\DCHU\cc30wk.exe 0x0013 1`))
 				sleep(1000)
 			}
 		}
 	}
 
-	// 2. 核心下发
-	e.setPowerMode(m)
+	// 2. 核心下发(失败即中止:后续联动都以它为前提)
+	if err := e.setPowerMode(m); err != nil {
+		log.Printf("powermode: 核心下发失败,回滚模式字节 %d→%d", int(m), int(pre))
+		if rbErr := e.as.SetPowerModeOnly(pre); rbErr != nil {
+			fail("核心下发(回滚也失败)", fmt.Errorf("%v;回滚: %w", err, rbErr))
+		} else {
+			fail("核心下发", err)
+		}
+		return errors.Join(fails...)
+	}
 
 	// 3. GPU 超频/限频联动
 	if e.gpuStore != nil && e.ControlGPUPath != "" {
-		e.gpuLink(m, pre)
+		fail("GPU 联动", e.gpuLink(m, pre))
 	}
 
 	// 4. EnergyStar
 	if !e.Sup.HW_PState {
+		es := 1
 		switch m {
 		case appsettings.Quiet, appsettings.Entertainment:
-			_ = e.w.SetEnergyStar(2)
+			es = 2
 		case appsettings.Performance:
-			_ = e.w.SetEnergyStar(0)
-		default:
-			_ = e.w.SetEnergyStar(1)
+			es = 0
 		}
+		fail("EnergyStar", e.w.SetEnergyStar(es))
 	}
 
 	// 5. Windows 电源计划(per-mode 表 0 Balanced/1 HighPerf/2 PowerSaver)
-	e.applyPowerPlan(m)
+	fail("电源计划", e.applyPowerPlan(m))
 
 	// 6. 风扇联动
 	if e.fan != nil {
@@ -312,20 +341,21 @@ func (e *Engine) Change(m appsettings.ModeType) {
 
 	// 7. NV 断电(quiet_plus / pwrsaving 且支持)
 	if e.Sup.NVIDIAPowerOff && m == appsettings.QuietPlus {
-		_ = eventbus.ExecCommand(`C:\Program Files (x86)\ControlCenter\DCHU\cc30wk.exe 0x0013 0`)
+		fail("NV 断电", eventbus.ExecCommand(`C:\Program Files (x86)\ControlCenter\DCHU\cc30wk.exe 0x0013 0`))
 	}
 
 	// 8. 广播完成事件(×2,与原版一致)
-	_ = eventbus.WriteOut("clevofnkey^202")
+	fail("广播完成事件", eventbus.WriteOut("clevofnkey^202"))
 	_ = eventbus.WriteOut("clevofnkey^202")
 
-	for _, fn := range e.onChanged {
+	for _, fn := range callbacks {
 		fn(pre, m)
 	}
+	return errors.Join(fails...)
 }
 
 // applyPowerPlan WMI4 sub29 电源计划表 → PowerSetActiveScheme。
-func (e *Engine) applyPowerPlan(m appsettings.ModeType) {
+func (e *Engine) applyPowerPlan(m appsettings.ModeType) error {
 	in := make([]byte, 256)
 	in[0] = 29
 	out := e.w.SetWMIPackageEx(4, in)
@@ -349,33 +379,40 @@ func (e *Engine) applyPowerPlan(m appsettings.ModeType) {
 	}
 	if err := win32.SetActivePowerScheme(g); err != nil {
 		log.Printf("powermode: SetActivePowerScheme(%s): %v", g.String(), err)
+		return err
 	}
+	return nil
 }
 
 // gpuLink GPU 限频/超频联动(Load_GPU_forFn_3)。
-func (e *Engine) gpuLink(m appsettings.ModeType, pre appsettings.ModeType) {
+func (e *Engine) gpuLink(m appsettings.ModeType, pre appsettings.ModeType) error {
 	ac := win32.ACOnline()
+	var fails []error
+	run := func(arg string) {
+		if err := eventbus.ExecProcess(e.ControlGPUPath, arg); err != nil {
+			fails = append(fails, fmt.Errorf("ControlGPU %s: %w", arg, err))
+		}
+	}
 	switch m {
 	case appsettings.Quiet:
-		_ = eventbus.ExecProcess(e.ControlGPUPath, "set_increment:0:0:0")
+		run("set_increment:0:0:0")
 	case appsettings.PowerSaving:
-		_ = eventbus.ExecProcess(e.ControlGPUPath, "set_increment:0:0:0")
+		run("set_increment:0:0:0")
 	case appsettings.Performance:
 		if ac {
 			g0, g1 := e.gpuStore.Saved()
-			_ = eventbus.ExecProcess(e.ControlGPUPath,
-				fmtSet(0, int(g0.Core), int(g0.Mem)))
-			_ = eventbus.ExecProcess(e.ControlGPUPath,
-				fmtSet(1, int(g1.Core), int(g1.Mem)))
+			run(fmtSet(0, int(g0.Core), int(g0.Mem)))
+			run(fmtSet(1, int(g1.Core), int(g1.Mem)))
 		} else {
-			_ = eventbus.ExecProcess(e.ControlGPUPath, "set_increment:0:0:0")
+			run("set_increment:0:0:0")
 		}
 	case appsettings.Entertainment:
 		if e.Sup.SimpleGPUOC || e.Sup.Performance {
 			g0, _ := e.gpuStore.Saved()
-			_ = eventbus.ExecProcess(e.ControlGPUPath, fmtSet(0, int(g0.Core), int(g0.Mem)))
+			run(fmtSet(0, int(g0.Core), int(g0.Mem)))
 		}
 	}
+	return errors.Join(fails...)
 }
 
 func fmtSet(idx, core, mem int) string {

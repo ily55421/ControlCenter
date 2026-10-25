@@ -17,6 +17,7 @@ var (
 	procPowerSetActive   = modpowrprof.NewProc("PowerSetActiveScheme")
 	procPowerWriteACIdx  = modpowrprof.NewProc("PowerWriteACValueIndex")
 	procPowerWriteDCIdx  = modpowrprof.NewProc("PowerWriteDCValueIndex")
+	procLocalFree        = modkernel32.NewProc("LocalFree")
 )
 
 // Windows 内置电源计划 GUID。
@@ -72,6 +73,11 @@ func GetActivePowerScheme() (windows.GUID, error) {
 	if r != 0 {
 		return windows.GUID{}, fmt.Errorf("PowerGetActiveScheme: %w", err)
 	}
+	if g == nil {
+		return windows.GUID{}, fmt.Errorf("PowerGetActiveScheme: 返回空指针")
+	}
+	// 该 API 用 LocalAlloc 分配 GUID,调用方负责 LocalFree
+	defer procLocalFree.Call(uintptr(unsafe.Pointer(g)))
 	return *g, nil
 }
 

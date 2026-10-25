@@ -25,6 +25,9 @@ const (
 	alphaOpaque = 255
 )
 
+// OSD 窗口的固定定时器 ID(常量:避免跨 goroutine 读写共享字段)。
+const osdTimerID = uintptr(1)
+
 var (
 	procSetLayeredAttr = moduser32.NewProc("SetLayeredWindowAttributes")
 	procSetWindowPos   = moduser32.NewProc("SetWindowPos")
@@ -67,7 +70,6 @@ type OSD struct {
 	bgColor uint32 // 0x00BBGGRR
 	fgColor uint32
 	alpha   byte
-	timerID uintptr
 	hideAfterMs int
 }
 
@@ -120,13 +122,12 @@ func (o *OSD) Show(text string, barMax, barVal int) {
 	procInvalidateRect.Call(uintptr(o.hwnd), 0, 1)
 	procUpdateWindow.Call(uintptr(o.hwnd))
 	// 1.5 秒后开始淡出
-	o.timerID = 1
-	procSetTimer.Call(uintptr(o.hwnd), o.timerID, 1500, 0)
+	procSetTimer.Call(uintptr(o.hwnd), osdTimerID, 1500, 0)
 }
 
 // Hide 立即隐藏。
 func (o *OSD) Hide() {
-	procKillTimer.Call(uintptr(o.hwnd), o.timerID)
+	procKillTimer.Call(uintptr(o.hwnd), osdTimerID)
 	procShowWindow.Call(uintptr(o.hwnd), 0)
 }
 
@@ -134,8 +135,8 @@ func (o *OSD) Hide() {
 func (o *OSD) wndProc(hwnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmTimer:
-		if uintptr(wParam) == o.timerID {
-			procKillTimer.Call(uintptr(hwnd), o.timerID)
+		if uintptr(wParam) == osdTimerID {
+			procKillTimer.Call(uintptr(hwnd), osdTimerID)
 			go o.fadeOut()
 		}
 		return 0
