@@ -249,17 +249,22 @@ func (c *Client) SetChargeDays(days, dischargeLimit int) error {
 	return c.SetWMIValue(118, 0x02000000|uint32(v))
 }
 
-// SetSchedule WMI(118,0x03000000/0x04000000|(start<<6)|((end+1)<<17))。
-func (c *Client) SetSchedule(slot, start, end int, enabled bool) error {
+// encodeScheduleValue 组装 WMI(118) 调度包:base | (start<<6) | ((end+1)<<17)。
+// 与原版 EnergySave MainWindow.cs:1910/1925 的 `num + (start<<6) + (end+1<<17)` 逐位一致。
+func encodeScheduleValue(slot, start, end int, enabled bool) uint32 {
 	base := uint32(0x03000000)
 	if slot == 2 {
 		base = 0x04000000
 	}
 	if !enabled {
-		return c.SetWMIValue(118, base)
+		return base
 	}
-	v := uint32(start&0x3F) | uint32(end+1)<<17
-	return c.SetWMIValue(118, base|v)
+	return base | uint32(start&0x3F)<<6 | uint32((end+1)&0x7F)<<17
+}
+
+// SetSchedule WMI(118,0x03000000/0x04000000|(start<<6)|((end+1)<<17))。
+func (c *Client) SetSchedule(slot, start, end int, enabled bool) error {
+	return c.SetWMIValue(118, encodeScheduleValue(slot, start, end, enabled))
 }
 
 // SetBatteryFlexi WMI(118,sub7,v)。

@@ -48,3 +48,34 @@ func TestListProcesses(t *testing.T) {
 	// TH32CS_SNAPPROCESS 通常包含自身;若被隐藏则只记录不失败
 	t.Logf("进程列表未包含自身 PID %d(共 %d 项)", self, len(list))
 }
+
+// TestProcessesExistSingleSnapshot 多进程名一次快照判定,结果与逐个查一致。
+func TestProcessesExistSingleSnapshot(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("无法取得自身路径: %v", err)
+	}
+	name := strings.ToLower(filepath.Base(self))
+	got := ProcessesExist(name, "no-such-process-cc-test.exe")
+	if !got[name] {
+		t.Errorf("ProcessesExist 漏判自身 %q", name)
+	}
+	if got["no-such-process-cc-test.exe"] {
+		t.Error("ProcessesExist 把不存在的进程判为存在")
+	}
+}
+
+// TestSingleInstanceGuard 同一进程内重复申请同一互斥量,第二次必须报"已存在"。
+// 这是各 exe 启动时的单实例判据(取代按 exe 名枚举进程)。
+func TestSingleInstanceGuard(t *testing.T) {
+	dup, err := SingleInstanceGuard("unit-test-probe")
+	if err != nil {
+		t.Skipf("CreateMutex 不可用: %v", err)
+	}
+	if dup {
+		t.Skip("同名互斥量已存在(上次测试未释放),跳过")
+	}
+	if dup2, err := SingleInstanceGuard("unit-test-probe"); err != nil || !dup2 {
+		t.Errorf("第二次申请 dup=%v err=%v, 期望 dup=true", dup2, err)
+	}
+}

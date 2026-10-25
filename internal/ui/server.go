@@ -37,10 +37,57 @@ type Server struct {
 	sampler  *energysave.Sampler
 	batState *batteryState
 
+	platOnce sync.Mutex
+	plat     *platform // 进程内不变的平台信息,首次使用时取
+
+	fanCache fanLiveCache // 风扇实时数据:EC 包读慢,改为缓存 + 异步刷新
+
 	bootStamp string // 本进程启动标记:页面据此在服务重启后自动刷新
 
 	GPUOCBase string // ControlGPU.exe 所在目录
 }
+
+// fanLiveTTL 风扇实时数据有效期。页面每 2 秒轮询一次,1 秒内的缓存直接返回。
+const fanLiveTTL = time.Second
+
+// fanLiveCache 缓存最近一次 GetPackage(12) 的结果。
+// EC 的 256 字节包读实测约 80ms,且会独占整条 ACPI 桥通道(所有 IOCTL 串行);
+// 若每个轮询请求都同步等它,面板卡住不说,托盘热键/其他面板请求也得排队。
+type fanLiveCache struct {
+	mu         sync.Mutex
+	live       fan.LiveSample
+	err        error
+	at         time.Time
+	sampled    bool
+	refreshing bool
+}
+
+// platform 运行期不会变的平台信息。这几项每项都要付一次 256 字节 WMI 包读
+// (实测真机 ~80ms/次),而它们只在开机时由 BIOS 决定,故取一次缓存。
+type platform struct {
+	tbl        *smbios.Table
+	customerID int
+	sup        powermode.SupportBits
+	kbType     keyboard.KBType
+}
+
+// platformInfo 惰性读取平台信息(含键盘类型向 AppSettings(2,4) 的一次镜像)。
+func (s *Server) platformInfo() *platform {
+	s.platOnce.Lock()
+	defer s.platOnce.Unlock()
+	if s.plat == nil {
+		s.plat = &platform{
+			tbl:        smbios.Get(),
+			customerID: int(s.w.GetPackage(17)[2]),
+			sup:        powermode.Detect(s.w, s.as),
+			kbType:     s.kb.Type(),
+		}
+	}
+	return s.plat
+}
+
+// customID 平台定制商 ID(WMI17[2],决定 XTU 参数分支)。
+func (s *Server) customID() int { return s.platformInfo().customerID }
 
 type batteryState struct {
 	Ongoing battery.Ongoing
@@ -136,32 +183,33 @@ func errJSON(w http.ResponseWriter, err error) {
 }
 
 // apiStatus 总状态(主页磁贴支持位)。
+// 页面每 15 秒轮询它做"服务是否重启"探测,所以这里只保留真正会变的量走硬件:
+// wmi16/mode/language/clevoID;平台信息(SMBIOS、WMI17、能力位、键盘类型)取一次缓存。
 func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 	w16 := s.w.GetInt(16)
-	sup := powermode.Detect(s.w, s.as)
-	tbl := smbios.Get()
+	p := s.platformInfo()
 	writeJSON(w, map[string]any{
 		"ok":          true,
 		"boot":        s.bootStamp,
 		"wmi16":       w16,
-		"kbType":      s.kb.Type(),
+		"kbType":      p.kbType,
 		"mode":        s.as.GetPowerMode(),
 		"language":    s.as.GetUILanguage(),
-		"customerID":  s.w.GetPackage(17)[2],
+		"customerID":  p.customerID,
 		"clevoID":     s.as.GetClevoID(),
-		"manufacturer": tbl.System.ManufacturerName,
-		"family":      tbl.System.Family,
-		"product":     tbl.System.ProductName,
-		"bios":        tbl.BIOS.Version,
-		"cpu":         tbl.CPU.Version,
-		"cores":       tbl.CPU.CoreCount,
+		"manufacturer": p.tbl.System.ManufacturerName,
+		"family":      p.tbl.System.Family,
+		"product":     p.tbl.System.ProductName,
+		"bios":        p.tbl.BIOS.Version,
+		"cpu":         p.tbl.CPU.Version,
+		"cores":       p.tbl.CPU.CoreCount,
 		"support": map[string]bool{
-			"powerMode": sup.PowerMode, "flexikey": w16&2 == 2 && sup.FeatureListVer >= 0,
-			"gpuoc": w16&0x20 != 0 || sup.SimpleGPUOC, "cpuoc": sup.CPUOC,
+			"powerMode": p.sup.PowerMode, "flexikey": w16&2 == 2 && p.sup.FeatureListVer >= 0,
+			"gpuoc": w16&0x20 != 0 || p.sup.SimpleGPUOC, "cpuoc": p.sup.CPUOC,
 			"fan": w16&0x80 != 0, "energy": w16&0x100 != 0, "battery": w16&0x200 != 0,
-			"keyboard": w16&0x18 != 0, "turboFan": sup.TurboFan, "slowFan": sup.SlowFan,
-			"msHybrid": sup.MSHybridSwitch, "amdRyzen": sup.AMDRyzen, "dtt": sup.DTT,
-			"quietPlus": sup.QuietPlusOnly || sup.NVIDIAPowerOff,
+			"keyboard": w16&0x18 != 0, "turboFan": p.sup.TurboFan, "slowFan": p.sup.SlowFan,
+			"msHybrid": p.sup.MSHybridSwitch, "amdRyzen": p.sup.AMDRyzen, "dtt": p.sup.DTT,
+			"quietPlus": p.sup.QuietPlusOnly || p.sup.NVIDIAPowerOff,
 		},
 	})
 }
@@ -350,9 +398,33 @@ func nonZero(b []byte) []int {
 
 func writeOutSafe(msg string) error { return writeOutImpl(msg) }
 
-// apiFanLive 风扇实时数据(1 秒轮询)。
+// fanLiveSnapshot 返回最近一次风扇采样:首次同步采(页面第一帧即真值),
+// 之后过期只触发一次后台刷新,请求本身立即返回上一份数据。
+func (s *Server) fanLiveSnapshot() (fan.LiveSample, error) {
+	c := &s.fanCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sampled {
+		c.live, c.err = s.fc.ReadLive()
+		c.sampled, c.at = true, time.Now()
+		return c.live, c.err
+	}
+	if time.Since(c.at) > fanLiveTTL && !c.refreshing {
+		c.refreshing = true
+		go func() {
+			live, err := s.fc.ReadLive()
+			c.mu.Lock()
+			c.live, c.err, c.at = live, err, time.Now()
+			c.refreshing = false
+			c.mu.Unlock()
+		}()
+	}
+	return c.live, c.err
+}
+
+// apiFanLive 风扇实时数据(页面 2 秒轮询;见 fanLiveCache 注释)。
 func (s *Server) apiFanLive(w http.ResponseWriter, r *http.Request) {
-	live, err := s.fc.ReadLive()
+	live, err := s.fanLiveSnapshot()
 	if err != nil {
 		errJSON(w, err)
 		return
@@ -467,26 +539,28 @@ func (s *Server) apiAntiDust(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiKBState 键盘灯状态(GET)。
+// apiKBState 键盘灯状态(GET)。全部字段落在 page2,取一次页快照即可(原为 14 次 4KB 读)。
 func (s *Server) apiKBState(w http.ResponseWriter, r *http.Request) {
-	t := s.kb.Type()
-	as := s.as
+	pg := s.as.Page(2)
 	writeJSON(w, map[string]any{
-		"ok": true, "type": t,
-		"on": as.ReadU8(592) == 1, "brightness": as.ReadU8(547),
-		"mode": as.ReadU8(544), "speed": as.ReadU8(546),
-		"allColor":  rgbMap(as, 593), "leftColor": rgbMap(as, 597),
-		"midColor": rgbMap(as, 601), "rightColor": rgbMap(as, 605),
-		"tpColor": rgbMap(as, 609), "logoColor": rgbMap(as, 613), "lightBarColor": rgbMap(as, 617),
-		"sleepTrigger": as.ReadU8(548) == 1,
-		"sleepSeconds": as.ReadU16(549),
-		"overrideBoot": as.ReadU8(appsettings.AddrOverrideBootEff),
+		"ok": true, "type": s.platformInfo().kbType,
+		"on": appsettings.U8(pg, 80) == 1, "brightness": appsettings.U8(pg, 35),
+		"mode": appsettings.U8(pg, 32), "speed": appsettings.U8(pg, 34),
+		"allColor":  rgbAt(pg, 81), "leftColor": rgbAt(pg, 85),
+		"midColor": rgbAt(pg, 89), "rightColor": rgbAt(pg, 93),
+		"tpColor": rgbAt(pg, 97), "logoColor": rgbAt(pg, 101), "lightBarColor": rgbAt(pg, 105),
+		"sleepTrigger": appsettings.U8(pg, 36) == 1,
+		"sleepSeconds": appsettings.U16(pg, 37),
+		"overrideBoot": appsettings.U8(pg, 7),
 	})
 }
 
-func rgbMap(as *appsettings.Store, base int) map[string]int {
-	b := as.Read(base, 3)
-	return map[string]int{"r": int(b[0]), "g": int(b[1]), "b": int(b[2])}
+// rgbAt 页内 3 字节 RGB。
+func rgbAt(pg []byte, off int) map[string]int {
+	if off < 0 || off+3 > len(pg) {
+		return map[string]int{"r": 0, "g": 0, "b": 0}
+	}
+	return map[string]int{"r": int(pg[off]), "g": int(pg[off+1]), "b": int(pg[off+2])}
 }
 
 // apiKBCmd 键盘灯命令(POST {"cmd":...})。
@@ -511,7 +585,7 @@ func (s *Server) apiKBCmd(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, err)
 		return
 	}
-	t := s.kb.Type()
+	t := s.platformInfo().kbType
 	col := keyboard.Color{R: req.R, G: req.G, B: req.B}
 	var err error
 	switch req.Cmd {
@@ -636,13 +710,14 @@ func (s *Server) apiGPUOC(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiCPUInfo CPU 超频信息(GET)。
+// apiCPUInfo CPU 超频信息(GET)。page6 一次页快照(原为 81 次 4KB 读)。
 func (s *Server) apiCPUInfo(w http.ResponseWriter, r *http.Request) {
+	pg := s.as.Page(6)
 	writeJSON(w, map[string]any{
-		"ok":     true,
-		"info":   cpuoc.ReadInfo(s.as),
-		"params": cpuoc.ReadParams(s.as),
-		"defaults": cpuoc.ReadDefaults(s.as),
+		"ok":       true,
+		"info":     cpuoc.ReadInfoFrom(pg),
+		"params":   cpuoc.ReadParamsFrom(pg),
+		"defaults": cpuoc.ReadDefaultsFrom(pg),
 	})
 }
 
@@ -655,7 +730,7 @@ func (s *Server) apiCPUApply(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, err)
 		return
 	}
-	customID := int(s.w.GetPackage(17)[2])
+	customID := s.customID()
 	if err := cpuoc.Apply(s.as, s.w, req.Params, customID); err != nil {
 		errJSON(w, err)
 		return
@@ -665,7 +740,7 @@ func (s *Server) apiCPUApply(w http.ResponseWriter, r *http.Request) {
 
 // apiCPUDefault 恢复默认。
 func (s *Server) apiCPUDefault(w http.ResponseWriter, r *http.Request) {
-	customID := int(s.w.GetPackage(17)[2])
+	customID := s.customID()
 	if err := cpuoc.RestoreDefaults(s.as, s.w, customID); err != nil {
 		errJSON(w, err)
 		return

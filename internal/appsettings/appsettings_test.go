@@ -1,6 +1,9 @@
 package appsettings
 
 import (
+	"bytes"
+	"encoding/binary"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -123,6 +126,79 @@ func TestPageWritesSerialize(t *testing.T) {
 		}
 		if got := f.pages[4][100+i]; got != byte(0xB0+i) {
 			t.Errorf("page4[%d] = %#x, 期望 %#x(单字节写被整页写覆盖)", 100+i, got, 0xB0+i)
+		}
+	}
+}
+
+// TestPageDecodersMatchStoreReaders 页快照解码必须与逐字段读完全同语义:
+// 整页读是逐字段读的替代实现,偏移/位宽/符号/字节序任一不一致都会静默改变面板数据。
+func TestPageDecodersMatchStoreReaders(t *testing.T) {
+	f := &fakeBridge{}
+	pg := f.pages[6][:]
+	pg[0] = 0x80                                  // int8 → -128
+	binary.LittleEndian.PutUint16(pg[1:], 0xFFFE) // int16 → -2
+	binary.LittleEndian.PutUint32(pg[3:], 0xFFFFFFFF)
+	binary.LittleEndian.PutUint32(pg[7:], math.Float32bits(-2.5))
+	pg[11], pg[12], pg[13] = 1, 2, 3
+	s := &Store{b: f}
+
+	snap := s.Page(6)
+	for _, c := range []struct {
+		off, len int
+	}{
+		{0, 1}, {1, 2}, {3, 4}, {11, 1},
+	} {
+		if got, want := Int(snap, c.off, c.len), s.ReadInt(0x600+c.off, c.len); got != want {
+			t.Errorf("Int(off=%d,len=%d) = %d, Store.ReadInt = %d", c.off, c.len, got, want)
+		}
+	}
+	if got, want := U8(snap, 0), s.ReadU8(0x600); got != want {
+		t.Errorf("U8 = %d, 期望 %d", got, want)
+	}
+	if got, want := U16(snap, 1), s.ReadU16(0x600+1); got != want {
+		t.Errorf("U16 = %d, 期望 %d", got, want)
+	}
+	if got, want := Float(snap, 7), s.ReadFloat(0x600+7); got != want {
+		t.Errorf("Float = %v, 期望 %v", got, want)
+	}
+	if got, want := Bytes(snap, 11, 3), s.Read(0x600+11, 3); !bytes.Equal(got, want) {
+		t.Errorf("Bytes = %v, 期望 %v", got, want)
+	}
+	// 符号语义抽查:同一段字节,Int 给负数、U16 给无符号
+	if Int(snap, 1, 2) != -2 || U16(snap, 1) != 65534 {
+		t.Errorf("符号处理错误: Int=%d U16=%d", Int(snap, 1, 2), U16(snap, 1))
+	}
+}
+
+// TestPageDecodersOutOfBounds 越界一律安全返回零值(驱动读失败时拿到的就是全零/短页)。
+func TestPageDecodersOutOfBounds(t *testing.T) {
+	pg := make([]byte, 8)
+	if Int(pg, 6, 4) != 0 || U16(pg, 7) != 0 || Float(pg, 5) != 0 || U8(pg, 8) != 0 {
+		t.Errorf("越界解码未安全返回零值")
+	}
+	if U8(pg, -1) != 0 || Int(pg, -2, 1) != 0 || Int(pg, -2, 2) != 0 || Int(pg, -4, 4) != 0 {
+		t.Errorf("负偏移未安全返回零值")
+	}
+	if !allZero(Bytes(pg, 6, 4)) || !allZero(Bytes(pg, -1, 2)) {
+		t.Errorf("越界 Bytes 应返回零值填充: %v %v", Bytes(pg, 6, 4), Bytes(pg, -1, 2))
+	}
+}
+
+func allZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// TestPageOutOfRange 非法页号返回零页而不是 panic。
+func TestPageOutOfRange(t *testing.T) {
+	s := &Store{b: &fakeBridge{}}
+	for _, p := range []int{-1, 16, 999} {
+		if got := s.Page(p); len(got) != 256 {
+			t.Errorf("Page(%d) 长度 = %d, 期望 256", p, len(got))
 		}
 	}
 }

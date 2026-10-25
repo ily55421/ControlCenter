@@ -55,62 +55,71 @@ type DefaultParams struct {
 }
 
 // ReadInfo 读平台信息。
-func ReadInfo(as *appsettings.Store) Info {
+func ReadInfo(as *appsettings.Store) Info { return ReadInfoFrom(as.Page(6)) }
+
+// ReadInfoFrom 从 page6 快照解码平台信息(偏移量相对页首)。
+func ReadInfoFrom(pg []byte) Info {
 	return Info{
-		CPUMHz:      as.ReadInt(1536+9, 4),
-		CPUVolt:     float64(as.ReadFloat(1536 + 13)),
-		CPUUtil:     as.ReadU8(1536 + 21),
-		CPUTemp:     as.ReadU8(1536 + 22),
-		MemMHz:      as.ReadInt(1536+23, 4),
-		RatioMax:    as.ReadU8(1536 + 224),
-		RatioMin:    as.ReadU8(1536 + 225),
-		TurboMaxMHz: as.ReadInt(1536+226, 2),
-		TurboMinMHz: as.ReadInt(1536+228, 2),
-		MemMaxMHz:   as.ReadInt(1536+230, 2),
-		RefClock:    as.ReadInt(1536+232, 2),
-		XTUBusy:     as.ReadU8(1536+251) == 0,
-		IsSaved:     as.ReadU8(appsettings.AddrXTUSaved) == 1,
+		CPUMHz:      appsettings.Int(pg, 9, 4),
+		CPUVolt:     float64(appsettings.Float(pg, 13)),
+		CPUUtil:     appsettings.U8(pg, 21),
+		CPUTemp:     appsettings.U8(pg, 22),
+		MemMHz:      appsettings.Int(pg, 23, 4),
+		RatioMax:    appsettings.U8(pg, 224),
+		RatioMin:    appsettings.U8(pg, 225),
+		TurboMaxMHz: appsettings.Int(pg, 226, 2),
+		TurboMinMHz: appsettings.Int(pg, 228, 2),
+		MemMaxMHz:   appsettings.Int(pg, 230, 2),
+		RefClock:    appsettings.Int(pg, 232, 2),
+		XTUBusy:     appsettings.U8(pg, 251) == 0,
+		IsSaved:     appsettings.U8(pg, 32) == 1,
 	}
 }
 
 // ReadParams 读当前参数。
-func ReadParams(as *appsettings.Store) Params {
+func ReadParams(as *appsettings.Store) Params { return ReadParamsFrom(as.Page(6)) }
+
+// ReadParamsFrom 从 page6 快照解码当前参数。
+func ReadParamsFrom(pg []byte) Params {
 	var p Params
-	p.PL1Watt = as.ReadInt(1536+33, 4)
-	p.PL2Watt = as.ReadInt(1536+37, 4)
-	p.PLTimeSec = as.ReadFloat(1536 + 41)
-	p.VRAuto = as.ReadU8(1536+74) == 1
-	p.VRLimit = as.ReadInt(1536+49, 4)
-	p.CoreOffset = as.ReadInt(1536+61, 4)
-	p.OverrideVolt = as.ReadFloat(1536 + 65)
-	p.GraphicsOff = as.ReadInt(1536+69, 4)
+	p.PL1Watt = appsettings.Int(pg, 33, 4)
+	p.PL2Watt = appsettings.Int(pg, 37, 4)
+	p.PLTimeSec = appsettings.Float(pg, 41)
+	p.VRAuto = appsettings.U8(pg, 74) == 1
+	p.VRLimit = appsettings.Int(pg, 49, 4)
+	p.CoreOffset = appsettings.Int(pg, 61, 4)
+	p.OverrideVolt = appsettings.Float(pg, 65)
+	p.GraphicsOff = appsettings.Int(pg, 69, 4)
 	for i := 0; i < 8; i++ {
-		p.PCores[i] = as.ReadU8(1536 + 53 + i)
+		p.PCores[i] = appsettings.U8(pg, 53+i)
 	}
-	p.PCores[8] = as.ReadU8(1536 + 75)
-	p.PCores[9] = as.ReadU8(1536 + 76)
+	p.PCores[8] = appsettings.U8(pg, 75)
+	p.PCores[9] = appsettings.U8(pg, 76)
 	for i := 0; i < 16; i++ {
-		p.ECores[i] = as.ReadU8(1536 + 77 + i)
+		p.ECores[i] = appsettings.U8(pg, 77+i)
 	}
 	return p
 }
 
 // ReadDefaults 读默认值区。
-func ReadDefaults(as *appsettings.Store) DefaultParams {
+func ReadDefaults(as *appsettings.Store) DefaultParams { return ReadDefaultsFrom(as.Page(6)) }
+
+// ReadDefaultsFrom 从 page6 快照解码默认值。
+func ReadDefaultsFrom(pg []byte) DefaultParams {
 	var d DefaultParams
-	d.PL1 = as.ReadInt(1536+110, 2)
-	d.PL2 = as.ReadInt(1536+112, 4)
-	d.PLTime = as.ReadFloat(1536 + 114)
-	d.VRAuto = as.ReadU8(1536+118) == 1
-	d.VR = as.ReadInt(1536+119, 4)
-	d.CoreOff = as.ReadInt(1536+123, 4)
-	d.Override = as.ReadFloat(1536 + 127)
-	d.GfxOff = as.ReadInt(1536+131, 4)
+	d.PL1 = appsettings.Int(pg, 110, 2)
+	d.PL2 = appsettings.Int(pg, 112, 4)
+	d.PLTime = appsettings.Float(pg, 114)
+	d.VRAuto = appsettings.U8(pg, 118) == 1
+	d.VR = appsettings.Int(pg, 119, 4)
+	d.CoreOff = appsettings.Int(pg, 123, 4)
+	d.Override = appsettings.Float(pg, 127)
+	d.GfxOff = appsettings.Int(pg, 131, 4)
 	for i := 0; i < 10; i++ {
-		d.PCores[i] = as.ReadU8(1536 + 135 + i)
+		d.PCores[i] = appsettings.U8(pg, 135+i)
 	}
 	for i := 0; i < 16; i++ {
-		d.ECores[i] = as.ReadU8(1536 + 145 + i)
+		d.ECores[i] = appsettings.U8(pg, 145+i)
 	}
 	return d
 }

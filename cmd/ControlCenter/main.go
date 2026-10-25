@@ -96,10 +96,11 @@ func autoCheck() {
 		} else {
 			log("… 服务 %s 未安装(热键事件源,建议一键安装)", svcName)
 		}
-		if win32.ProcessExistsByName("ccfnkey.exe") {
+		exists := win32.ProcessesExist("ccfnkey.exe", "ccapp.exe")
+		if exists["ccfnkey.exe"] {
 			log("✓ 托盘(ccfnkey)运行中")
 		}
-		if win32.ProcessExistsByName("ccapp.exe") {
+		if exists["ccapp.exe"] {
 			log("✓ 主界面(ccapp)运行中 → http://127.0.0.1:8765/")
 		}
 	}()

@@ -99,6 +99,79 @@ func (s *Store) WithPage(page int, edit func(pg []byte)) error {
 	return s.b.WriteAppSettings(page, 0, 256, pg)
 }
 
+// Page 一次读取整页(256B)快照。
+// 字段密集的面板(风扇/键盘灯/XTU 参数表)逐字段读等于每字段付一次 4KB 读 IOCTL;
+// 取一次快照后在内存里解码,一次响应内读到的也是同一份数据。
+// 注意:这是"每次调用都实读",不做跨调用缓存 —— 原版 CC40/FnKey/DCHUService
+// 也在写同一个 4KB 区,跨调用缓存会读到陈旧值。
+func (s *Store) Page(page int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if page < 0 || page > 15 {
+		return make([]byte, 256)
+	}
+	return s.readLocked(page*256, 256)
+}
+
+// --- 页内解码:与 Store.ReadInt/ReadU16/ReadFloat 完全同语义(有符号按宽度截断)---
+
+// U8 取 1 字节无符号。
+func U8(pg []byte, off int) int {
+	if off < 0 || off >= len(pg) {
+		return 0
+	}
+	return int(pg[off])
+}
+
+// U16 取 2 字节无符号(小端)。
+func U16(pg []byte, off int) int {
+	if off < 0 || off+2 > len(pg) {
+		return 0
+	}
+	return int(binary.LittleEndian.Uint16(pg[off:]))
+}
+
+// Int 按宽度取有符号整数(1→int8,2→int16,其余 int32),与 Store.ReadInt 一致。
+func Int(pg []byte, off, length int) int {
+	switch length {
+	case 1:
+		if off < 0 || off >= len(pg) {
+			return 0
+		}
+		return int(int8(pg[off]))
+	case 2:
+		return int(int16(uint16(U16(pg, off))))
+	default:
+		if off < 0 || off+4 > len(pg) {
+			return 0
+		}
+		return int(int32(binary.LittleEndian.Uint32(pg[off:])))
+	}
+}
+
+// Float 取小端 float32。
+func Float(pg []byte, off int) float32 {
+	if off < 0 || off+4 > len(pg) {
+		return 0
+	}
+	return float32FromBits(binary.LittleEndian.Uint32(pg[off:]))
+}
+
+// Bytes 取页内连续字节副本。
+func Bytes(pg []byte, off, length int) []byte {
+	if off < 0 || length <= 0 || off+length > len(pg) {
+		return make([]byte, max0(length))
+	}
+	return append([]byte{}, pg[off:off+length]...)
+}
+
+func max0(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 // --- 类型化便捷访问 ---
 
 func (s *Store) ReadU8(index int) int   { return int(s.Read(index, 1)[0]) }

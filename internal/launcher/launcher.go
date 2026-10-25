@@ -54,9 +54,39 @@ func Open(page, title string) {
 		return
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/#%s", port, page)
-	win32.OpenAppWindow(url)
-	time.Sleep(1200 * time.Millisecond)
-	_ = win32.FocusWindow(title)
+	prev := win32.WindowByTitle(title)
+	if !win32.OpenAppWindow(url) {
+		return
+	}
+	waitNewWindow(title, prev)
+}
+
+// waitNewWindow 等新出现的那个窗口再前置。
+// 原来是无条件 Sleep(1200ms) 后按标题找一次。这里分两种情况提前收工:
+// 新句柄出现(FindWindowW 取 Z 序最前,新窗口建好即排在最上)就前置它;
+// 句柄始终不变说明 Edge 复用了同名 app 窗口(它自己已经激活该窗口),不必再等。
+func waitNewWindow(title string, prev uintptr) {
+	const (
+		grace   = 400 * time.Millisecond // 判定"复用"的等待下限
+		timeout = 1200 * time.Millisecond // 上限:与原来的固定等待同量,不会更差
+	)
+	start := time.Now()
+	for {
+		h := win32.WindowByTitle(title)
+		elapsed := time.Since(start)
+		switch {
+		case h != 0 && h != prev:
+			win32.FocusWindowHandle(h)
+			return
+		case h != 0 && h == prev && elapsed >= grace:
+			win32.FocusWindowHandle(h)
+			return
+		case elapsed >= timeout:
+			win32.FocusWindowHandle(h)
+			return
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
 }
 
 func readPort() int {

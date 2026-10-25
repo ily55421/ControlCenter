@@ -255,12 +255,17 @@ func (e *Engine) setPowerMode(m appsettings.ModeType) error {
 }
 
 func isDTTDriverInstalled() bool {
+	// 先问 SCM(微秒级),再退到全量进程快照(实测 ~50ms/次):
+	// 这个判断在每次切到 Performance 模式时都会走。
+	if win32.ServiceExists("esifsvc") || win32.ServiceExists("intel_dptf_service") {
+		return true
+	}
 	for _, p := range win32.ListProcesses() {
 		if p.Name == "intel_dptf_service.exe" || p.Name == "esif_utop.exe" {
 			return true
 		}
 	}
-	return win32.ServiceExists("esifsvc") || win32.ServiceExists("intel_dptf_service")
+	return false
 }
 
 // Change 完整切换序列(阻塞执行)。

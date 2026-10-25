@@ -30,7 +30,7 @@ func main() {
 	log.SetFlags(log.Ltime | log.Ldate)
 
 	// 单实例
-	if win32.ProcessExistsOther("ccfnkey.exe") {
+	if dup, err := win32.SingleInstanceGuard("ccfnkey"); err == nil && dup {
 		return
 	}
 
@@ -77,11 +77,12 @@ func main() {
 }
 
 func waitLogs() {
-	for i := 0; i < 30; i++ {
+	// 服务启动时秒级创建日志:200ms 一轮即可,原来 1s 一轮让托盘平白晚起。
+	for i := 0; i < 150; i++ {
 		if eventbus.LogsExist() {
 			return
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(200 * time.Millisecond)
 	}
 	log.Printf("事件日志不存在,由本进程尝试创建")
 	if err := eventbus.EnsureLogs(); err != nil {

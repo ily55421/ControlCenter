@@ -31,3 +31,35 @@ func TestEncodeSetWMIHighByteOverwritten(t *testing.T) {
 		t.Errorf("byte[3] = %#x, 期望子命令 0x1F", buf[3])
 	}
 }
+
+// TestEncodeScheduleValue 节能调度起始小时必须左移 6 位。
+// 回归:曾写成 `start&0x3F`(未移位),于是 22:00 起被下发成约 0.34 点,
+// 整个充放电时段提前到凌晨。判据取自原版 EnergySave MainWindow.cs:1910
+// `num + (start<<6) + (end+1<<17)`。
+func TestEncodeScheduleValue(t *testing.T) {
+	cases := []struct {
+		name           string
+		slot, start, end int
+		enabled        bool
+		want           uint32
+	}{
+		{"槽1 22→23 点", 1, 22, 23, true, 0x03000000 | (22 << 6) | (24 << 17)},
+		{"槽1 0→23 点(全天)", 1, 0, 23, true, 0x03000000 | (24 << 17)},
+		{"槽2 8→12 点", 2, 8, 12, true, 0x04000000 | (8 << 6) | (13 << 17)},
+		{"停用只发基址", 1, 22, 23, false, 0x03000000},
+		{"槽2 停用只发基址", 2, 1, 2, false, 0x04000000},
+	}
+	for _, c := range cases {
+		if got := encodeScheduleValue(c.slot, c.start, c.end, c.enabled); got != c.want {
+			t.Errorf("%s: = %#08x, 期望 %#08x", c.name, got, c.want)
+		}
+	}
+	// 起始小时落在 bit6..11,不能污染基址或结束字段
+	v := encodeScheduleValue(1, 22, 23, true)
+	if got := (v >> 6) & 0x3F; got != 22 {
+		t.Errorf("起始小时位段解出 %d, 期望 22", got)
+	}
+	if got := (v >> 17) & 0x7F; got != 24 {
+		t.Errorf("结束小时(+1)位段解出 %d, 期望 24", got)
+	}
+}

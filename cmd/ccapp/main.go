@@ -29,7 +29,7 @@ func main() {
 	log.SetFlags(log.Ltime)
 
 	// 单实例:已有实例则激活其 GUI 窗口(而不是静默退出)
-	if win32.ProcessExistsOther("ccapp.exe") {
+	if dup, err := win32.SingleInstanceGuard("ccapp"); err == nil && dup {
 		fmt.Println("Control Center 已在运行,激活窗口")
 		launcher.Open("system", "Control Center")
 		return
