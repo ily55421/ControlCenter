@@ -123,7 +123,7 @@ type GUI struct {
 
 	// 表盘动画值(UI 线程;目标来自快照,每帧向目标收敛)
 	cpuDial, fanCpuDial, fanGpuDial, chDial animVal
-	cpuMHz, cpuTemp animVal // 大数字平滑(频率/温度文本随动画值刷新)
+	cpuMHz, cpuTemp                         animVal // 大数字平滑(频率/温度文本随动画值刷新)
 
 	// CPU 历史(1s 一点 × 60 = 1 分钟窗口;轮询协程写/UI 读)
 	cpuTempH []float64
@@ -537,6 +537,10 @@ func (g *GUI) layoutSidebar(gtx C) D {
 						} else if clk.Hovered() {
 							iconCol, lblCol = colorSafe(0xAE, 0xB8, 0xC1), colorSafe(0xAE, 0xB8, 0xC1)
 						}
+						// 内容宽度锁定为侧栏宽:否则 Flex 自然宽度左贴,
+						// Middle 在 26px 容器内"居中"等于没居中(图标全部偏左)。
+						gtx.Constraints.Min.X = w
+						gtx.Constraints.Max.X = w
 						return layout.Inset{Top: unit.Dp(15), Bottom: unit.Dp(13)}.Layout(gtx, func(gtx C) D {
 							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 								layout.Rigid(func(gtx C) D {
@@ -649,12 +653,15 @@ func grid2(gtx C, wl, wr float32, l, r layout.Widget) D {
 	rw := w - gap - lw
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(lw, gtx.Constraints.Max.Y))
+			gtx.Constraints.Min.X = lw
+			gtx.Constraints.Max.X = lw
+			gtx.Constraints.Min.Y = 0 // 高度交还自然布局(Exact 会把巨大 Min.Y 传导给末位子项,曾致面板拉伸/行丢失)
 			return l(gtx)
 		}),
-		layout.Rigid(hSpacerSP(gap)),
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(rw, gtx.Constraints.Max.Y))
+			gtx.Constraints.Min.X = rw
+			gtx.Constraints.Max.X = rw
+			gtx.Constraints.Min.Y = 0
 			return r(gtx)
 		}),
 	)

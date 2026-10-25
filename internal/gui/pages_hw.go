@@ -88,7 +88,9 @@ func (g *GUI) pageCPU(gtx C) D {
 							func(gtx C) D { return kvRow(gtx, "温度", fmt.Sprintf("%d ℃", inf.CPUTemp)) },
 							func(gtx C) D { return kvRow(gtx, "利用率", fmt.Sprintf("%d%%", inf.CPUUtil)) },
 							func(gtx C) D { return kvRow(gtx, "内存频率", fmt.Sprintf("%d MHz", inf.MemMHz)) },
-							func(gtx C) D { return kvRow(gtx, "Turbo 范围", fmt.Sprintf("%d ~ %d MHz", inf.TurboMinMHz, inf.TurboMaxMHz)) },
+							func(gtx C) D {
+								return kvRow(gtx, "Turbo 范围", fmt.Sprintf("%d ~ %d MHz", inf.TurboMinMHz, inf.TurboMaxMHz))
+							},
 							func(gtx C) D { return kvRow(gtx, "倍频范围", fmt.Sprintf("%dx ~ %dx", inf.RatioMin, inf.RatioMax)) },
 						)
 					})
@@ -209,7 +211,9 @@ func (g *GUI) pageGPU(gtx C) D {
 					hSpacer(12), func(gtx C) D { return actBtn(gtx, &g.w.gpuResetB, "恢复默认", btnPlain, false) })
 			},
 			vSpacer(6),
-			func(gtx C) D { return label(gtx, "写入 AppSettings page5(非对称 int16)→ ControlGPU.exe set_increment", 12, pal.Dim) })
+			func(gtx C) D {
+				return label(gtx, "写入 AppSettings page5(非对称 int16)→ ControlGPU.exe set_increment", 12, pal.Dim)
+			})
 	}
 	return grid2(gtx, 1, 1,
 		func(gtx C) D {
@@ -262,8 +266,10 @@ func (g *GUI) pageBat(gtx C) D {
 					func(gtx C) D { return kvRow(gtx, "使用年限", fmt.Sprintf("%.1f 年", s.AgeYears)) },
 					func(gtx C) D { return kvRow(gtx, "停充阈值", fmt.Sprintf("%d%%", s.StopThresh)) },
 					vSpacer(12),
-					func(gtx C) D { return row(gtx, func(gtx C) D { return label(gtx, "健康判定:", 13, pal.Dim) },
-						hSpacer(10), func(gtx C) D { return badge(gtx, hcTxt, kind) }) })
+					func(gtx C) D {
+						return row(gtx, func(gtx C) D { return label(gtx, "健康判定:", 13, pal.Dim) },
+							hSpacer(10), func(gtx C) D { return badge(gtx, hcTxt, kind) })
+					})
 			})
 		},
 		func(gtx C) D {
@@ -300,12 +306,12 @@ func (g *GUI) pageEnergy(gtx C) D {
 		p := energysave.Profile{
 			Name: "go", Schedule1On: g.w.es1on.Value,
 			Schedule1Start: g.w.es1s.value(), Schedule1End: g.w.es1e.value(),
-			Schedule2On: g.w.es2on.Value,
+			Schedule2On:    g.w.es2on.Value,
 			Schedule2Start: g.w.es2s.value(), Schedule2End: g.w.es2e.value(),
-			Everyday: g.w.esEv.selected() == 0,
-			Weekdays: [7]bool{true, true, true, true, true, true, true},
-			AutoBattery: true,
-			ChargeLimit: []int{60, 70, 80, 90, 100}[g.w.ecCL.selected()],
+			Everyday:       g.w.esEv.selected() == 0,
+			Weekdays:       [7]bool{true, true, true, true, true, true, true},
+			AutoBattery:    true,
+			ChargeLimit:    []int{60, 70, 80, 90, 100}[g.w.ecCL.selected()],
 			DischargeLimit: []int{40, 50, 60, 70, 80, 90, 95}[g.w.ecDL.selected()],
 		}
 		if p.Overlap() {
@@ -345,13 +351,17 @@ func (g *GUI) pageEnergy(gtx C) D {
 				return col(gtx,
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return label(gtx, "充电上限 %", 13, pal.Dim) },
-							hSpacer(6), func(gtx C) D { return g.w.ecCL.layout(gtx) },
+							hSpacer(6), func(gtx C) D {
+								return g.w.ecCL.layout(gtx)
+							},
 							hSpacer(14),
 							func(gtx C) D { return label(gtx, "放电下限 %", 13, pal.Dim) },
 							hSpacer(6), func(gtx C) D { return g.w.ecDL.layout(gtx) })
 					},
 					vSpacer(10),
-func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) }), layout.Rigid(vSpacer(2))) },
+					func(gtx C) D {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
+					},
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es1on) },
 							hSpacer(8),
@@ -361,7 +371,9 @@ func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rig
 							func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
 					},
 					vSpacer(6),
-func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) }), layout.Rigid(vSpacer(2))) },
+					func(gtx C) D {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
+					},
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es2on) },
 							hSpacer(8),
@@ -381,7 +393,9 @@ func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rig
 							hSpacer(12), func(gtx C) D { return actBtn(gtx, &g.w.enDisable, "停用", btnPlain, false) })
 					},
 					vSpacer(4),
-					func(gtx C) D { return label(gtx, "下发:WMI 118(时间同步 → 生效日 → 调度×2 → 使能 → 阈值)", 12, pal.Dim) })
+					func(gtx C) D {
+						return label(gtx, "下发:WMI 118(时间同步 → 生效日 → 调度×2 → 使能 → 阈值)", 12, pal.Dim)
+					})
 			})
 		})
 }
@@ -412,7 +426,10 @@ func (g *GUI) pagePref(gtx C) D {
 		})
 	}
 	// GPU 模式下拉:按支持位重建选项
-	type gpuOpt struct{ label string; val int }
+	type gpuOpt struct {
+		label string
+		val   int
+	}
 	var gpuOpts []gpuOpt
 	if s.GPUSwitch.Support&1 != 0 {
 		gpuOpts = append(gpuOpts, gpuOpt{"仅集成显卡", 1})

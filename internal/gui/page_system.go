@@ -333,12 +333,17 @@ func gridPair(gtx C, l, r layout.Widget) D {
 	}
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(half, gtx.Constraints.Max.Y))
+			// 只锁宽度;Exact 会把巨大 Min.Y 传导给末位子项(面板拉伸/行丢失)
+			gtx.Constraints.Min.X = half
+			gtx.Constraints.Max.X = half
+			gtx.Constraints.Min.Y = 0
 			return l(gtx)
 		}),
 		layout.Rigid(hSpacerSP(gap)),
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints = layout.Exact(image.Pt(half, gtx.Constraints.Max.Y))
+			gtx.Constraints.Min.X = half
+			gtx.Constraints.Max.X = half
+			gtx.Constraints.Min.Y = 0
 			return r(gtx)
 		}),
 	)

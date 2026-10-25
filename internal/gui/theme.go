@@ -195,7 +195,10 @@ func row(gtx C, items ...any) D {
 		switch v := it.(type) {
 		case layout.FlexChild:
 			kids = append(kids, v)
-		case layout.Widget:
+		case layout.Widget: // 命名函数类型(hSpacer 等返回值)
+			kids = append(kids, layout.Rigid(v))
+		case func(gtx C) D: // 无名闭包:动态类型不是 layout.Widget,必须单独匹配,
+			// 否则整行除 spacer 外全部被丢弃(节能页等行消失的根因)
 			kids = append(kids, layout.Rigid(v))
 		}
 	}
