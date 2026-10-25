@@ -69,6 +69,9 @@ func main() {
 	_ = as.WriteU8(7, 0)
 	// CC30 运行标志
 	_ = as.WriteU8(appsettings.AddrCC30Launch, 1)
+	// XTU 实时区读取标志:置 1 后 FnKey/驱动持续刷新 page6 实时数据(频率/温度/利用率);
+	// 退出时清 0(见 OutLog 监听与 cleanupExit)。原版由 App_Startup 设置。
+	_ = as.WriteU8(appsettings.AddrXTUInfoRead, 1)
 
 	// 开机回写充电模式:EC 的充电控制寄存器冷启动会被 BIOS 复位,按记忆重新下发。
 	if applied, err := battery.RestoreCharger(w); err != nil {
