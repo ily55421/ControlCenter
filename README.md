@@ -22,7 +22,7 @@ ACPI 桥设备枚举、4KB 设置区读写、WMI 16/96/122/12/13/17 整数与包
 | DCHUService.exe | `cmd/ccservice` | 热键事件源 + w_arg253/254/255 进程通道 + 会话管理 |
 | FnKey.exe | `cmd/ccfnkey` | 托盘/OSD/电源模式引擎/热键分发 |
 | ControlCenter30.exe | `cmd/ccapp` | 主界面(磁贴/模式/偏好设置) |
-| FanSpeedSetting / Keyboard / Flexikey / BatteryUtility / EnergySave / CPU_OC / GPUOverclocking appx | `cmd/ccfan` 等 + `internal/ui` | 全部功能面板(Web UI) |
+| FanSpeedSetting / Keyboard / Flexikey / BatteryUtility / EnergySave / CPU_OC / GPUOverclocking appx | `cmd/ccfan` 等 + `internal/gui` | 全部功能面板(**原生 GUI**,Gio/D3D11 硬件渲染) |
 | CClnk / RunAutoInstall / RemoveAPP / clean / WakePanelUp_Hook | `cmd/ccutil` 子命令 | 工具集 |
 
 ## 构建
@@ -35,7 +35,7 @@ for t in ccapp ccservice ccfnkey ccfan cckeyboard ccflexikey ccbattery ccenergy 
 done
 ```
 
-仅依赖 `golang.org/x/sys`,其余全部标准库。仅支持 Windows x64。
+依赖 `golang.org/x/sys` 与 `gioui.org`(原生 GUI,Windows 上纯 Go 直调 D3D11,无需 cgo),其余全部标准库。仅支持 Windows x64。
 
 ## 部署与运行(全 GUI,无脚本)
 
@@ -46,7 +46,7 @@ done
 | 按钮 | 动作 |
 |---|---|
 | ① 一键安装 | 自动请求 UAC 提权 → 创建事件日志 → 安装并启动 CCDCHUService 服务 → 创建桌面快捷方式 → 拉起托盘与主界面 |
-| ② 启动 Control Center | 免管理员:启动托盘(ccfnkey)与主界面(ccapp,自动打开 http://127.0.0.1:8765/) |
+| ② 启动 Control Center | 免管理员:启动托盘(ccfnkey)与主界面(ccapp **原生窗口**) |
 | 硬件诊断 | ACPI 桥连接 / 设置区 / WMI 命令 / 风扇实时 / 键盘灯 / SMBIOS 全量检测,结果显示在窗口日志区 |
 | 卸载 | 自动提权 → 停止并移除服务 → 结束后台进程 |
 
@@ -55,25 +55,25 @@ done
 
 ## GUI 界面
 
-功能面板是**独立应用窗口**(不是浏览器标签页):主界面窗口由 `ccapp` 通过 Edge/Chrome 的
-**app 模式**启动——无地址栏、无标签栏、独立任务栏图标、标题为 `Control Center`,观感与操作
-等同原版原生窗口;找不到 app 模式浏览器时自动回退默认浏览器。
+功能面板是**真正的 Windows 原生 GUI**(`internal/gui`,Gio 即时模式 + Direct3D11 硬件渲染,
+纯 Go 无 cgo):仪表盘/色环/键帽图/功耗曲线全部矢量自绘,静态零 GPU 负载、数据变化才重绘;
+后端直连 internal 引擎层(无 HTTP/JSON 序列化),轮询按当前页择要采样(系统页 2s、节能页 1s),
+慢速 EC 读不再阻塞其他面板。视觉对齐原 Web UI 的 CC40 霓虹风格(微软雅黑确定性渲染)。
 
 | 入口 | 行为 |
 |---|---|
-| `ccapp.exe`(主界面) | 单实例检测 → 启动内嵌 UI(8765,占用则随机)→ 打开**独立应用窗口** → 常驻后台 |
+| `ccapp.exe`(主界面) | 单实例互斥量 → 原生窗口(标题 `Control Center`)→ 常驻 |
 | `ccfnkey.exe`(托盘) | 托盘图标 + 5 种电源模式菜单 + 点击打开主窗口;随会话常驻 |
-| `ccfan/cckeyboard/ccgpuoc/ccbattery/ccenergy/ccpuoc/ccflexikey` | 复用**同一个** UI 服务,直接打开对应面板(`launcher` 经端口文件 `~/.controlcenter/ui.port` 复用,不再重复起服务) |
-| 托盘/热键"打开面板" | 原版 UWP 已安装则走原版通道(互操作);未安装则打开本项目对应面板窗口 |
+| `ccfan/cckeyboard/ccgpuoc/ccbattery/ccenergy/ccpuoc/ccflexikey` | 经 `launcher` 激活运行中的 ccapp 并**切到对应页**;未运行则以 `-page=<页>` 拉起 |
+| 托盘/热键"打开面板" | 原版 UWP 已安装则走原版通道(互操作);未安装则打开本项目对应面板 |
 
-面板深链:`http://127.0.0.1:8765/#<page>`,`page` 支持
+面板深链:`ccapp.exe -page=<page>` / 跨进程 `WM_COPYDATA` 导航(message-only 窗口
+`ControlCenterGo-Nav`),`page` 支持
 `system / kb / flexikey / charger / cpu / gpu / bat / energy / pref`,以及原版别名
 (`keyboard`、`perkey`、`fan`、`power`、`gpuoc`、`cpuoc`、`battery`、`flexicharger`、`preferences` 等)。
 
-窗口内每 15 秒核对服务端 `boot` 标记:ccapp 重启或升级后窗口**自动刷新**到新版本 UI。
-
-退出:托盘菜单"退出"关闭托盘;关闭窗口仅关窗口(ccapp 保持后台服务,与主界面窗口分离)。
-彻底退出可运行 `ccutil service remove` 或结束 `ccapp.exe` / `ccfnkey.exe`。
+退出:关闭窗口(点 X)即清运行标志并退出 ccapp;托盘菜单"退出"关闭托盘;托盘/热键的
+关闭命令(`clevofnkey^204`)经事件总线送达 ccapp 优雅退出。
 
 ## 架构
 
@@ -90,7 +90,7 @@ done
 │  • 热键分发(50+ 事件:键盘灯/触摸板/摄像头/飞行…)│
 │  • OSD(原生 Win32 分层窗口)                     │
 └───────────────────────┬──────────────────────────┘
-┌─ ccapp + internal/ui ▼(Web UI,127.0.0.1)───────┐
+┌─ ccapp + internal/gui ▼(原生 GUI,D3D11)────────┐
 │  电源模式 │ 偏好设置 │ 风扇 │ 键盘灯 │ CPU/GPU 超频│
 │  电池 │ 节能计划 │ Flexikey(ccflexikey + 驱动)  │
 └──────────────────────────────────────────────────┘
@@ -135,7 +135,7 @@ done
    持久化(AppSettings page5)与编码逐字节一致。
 3. **CPU 超频的 XTU 执行**:与原版一致,参数写入 AppSettings page6 由 BIOS/EC/XTU 后台执行;
    Go 侧完成全部参数读写与 Apply/Default 序列。
-4. **UI**:功能面板为内嵌 Web UI(风扇曲线/RGB 调色/超频滑杆等富交互);托盘与 OSD 为原生 Win32
+4. **UI**:功能面板为原生 Gio/D3D11 GUI(风扇曲线/RGB 调色/超频滑杆等富交互,直连引擎层);托盘与 OSD 为原生 Win32
    (syscall 直调,无 CGO)。
 5. **事件日志兼容**:与原版 .NET 组件互发消息时使用相同的 Source/Log 与消息格式;若系统仍装着原版
    组件,二者可通过同一事件总线互通。

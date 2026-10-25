@@ -18,6 +18,7 @@ import (
 	"controlcenter/internal/gpu"
 	"controlcenter/internal/hotkeys"
 	"controlcenter/internal/keyboard"
+	"controlcenter/internal/launcher"
 	"controlcenter/internal/osdnotifier"
 	"controlcenter/internal/powermode"
 	"controlcenter/internal/win32"
@@ -189,7 +190,7 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 	update()
 
 	tray.OnCommand(idOpen, func() {
-		win32.OpenAppWindow("http://127.0.0.1:8765/")
+		launcher.Open("system", launcher.MainWindowTitle)
 		_ = eventbus.WriteOut("clevofnkey^149")
 	})
 	modeCmd := func(m appsettings.ModeType) func() {
@@ -205,7 +206,7 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 		os.Exit(0)
 	})
 	tray.SetOnClick(func() {
-		win32.OpenAppWindow("http://127.0.0.1:8765/")
+		launcher.Open("system", launcher.MainWindowTitle)
 	})
 
 	pm.OnChanged(func(from, to appsettings.ModeType) { update() })

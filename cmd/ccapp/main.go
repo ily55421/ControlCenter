@@ -1,5 +1,6 @@
-// ccapp — ControlCenter30.exe 的 Go 等价实现(主界面启动器):
-// 内嵌 Web UI(全部功能面板)+ 磁贴/电源模式/偏好设置,事件日志 IPC 完全兼容。
+// ccapp — ControlCenter30.exe 的 Go 等价实现(主界面):
+// Windows 原生 GUI(Gio/D3D11 硬件渲染)+ 直连引擎层(无 HTTP/JSON),
+// 磁贴/电源模式/偏好设置,事件日志 IPC 与原版完全兼容。
 package main
 
 import (
@@ -10,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"controlcenter/internal/launcher"
+	"gioui.org/app"
 
 	"controlcenter/internal/appsettings"
 	"controlcenter/internal/battery"
@@ -18,20 +19,36 @@ import (
 	"controlcenter/internal/eventbus"
 	"controlcenter/internal/fan"
 	"controlcenter/internal/gpu"
+	"controlcenter/internal/gui"
 	"controlcenter/internal/keyboard"
+	"controlcenter/internal/launcher"
 	"controlcenter/internal/powermode"
-	"controlcenter/internal/ui"
 	"controlcenter/internal/win32"
 	"controlcenter/internal/wmi"
 )
 
+// instanceName 单实例互斥量名;默认与正式版一致,冒烟测试用 ldflags 覆盖。
+var instanceName = "ccapp"
+
 func main() {
 	log.SetFlags(log.Ltime)
 
-	// 单实例:已有实例则激活其 GUI 窗口(而不是静默退出)
-	if dup, err := win32.SingleInstanceGuard("ccapp"); err == nil && dup {
+	// 深链页参数(-page=fan 等,兼容面板启动器/托盘/旧版协议页名)
+	page := ""
+	for _, a := range os.Args[1:] {
+		if v, ok := strings.CutPrefix(a, "-page="); ok {
+			page = launcher.NormalizePage(v)
+		}
+	}
+
+	// 单实例:已有实例则导航到目标页并前置其窗口(而不是静默退出)
+	// instanceName 可经 -ldflags "-X main.instanceName=..." 覆盖(冒烟测试用独立名字)。
+	if dup, err := win32.SingleInstanceGuard(instanceName); err == nil && dup {
 		fmt.Println("Control Center 已在运行,激活窗口")
-		launcher.Open("system", "Control Center")
+		if !win32.NavNotify(page) {
+			// 旧版实例没有导航窗口:仅前置
+			win32.FocusWindow(launcher.MainWindowTitle)
+		}
 		return
 	}
 
@@ -53,8 +70,6 @@ func main() {
 	// CC30 运行标志
 	_ = as.WriteU8(appsettings.AddrCC30Launch, 1)
 
-	ui.SetEventWriter(eventbus.WriteOut)
-
 	// 开机回写充电模式:EC 的充电控制寄存器冷启动会被 BIOS 复位,按记忆重新下发。
 	if applied, err := battery.RestoreCharger(w); err != nil {
 		log.Printf("FlexiCharger 回写失败: %v", err)
@@ -62,28 +77,21 @@ func main() {
 		log.Printf("FlexiCharger 已按记忆回写 EC")
 	}
 
-	srv := ui.New(w, as, kb, fc, pm)
-	// GPU OC 应用通道:探测 ControlGPU.exe(与 ccfnkey 同约定)
+	be := gui.NewBackend(w, as, kb, fc, pm)
 	if pm.ControlGPUPath != "" {
-		srv.GPUOCBase = filepath.Dir(pm.ControlGPUPath)
+		be.GPUOCBase = filepath.Dir(pm.ControlGPUPath)
 	}
-	// 固定端口 8765 优先(与启动器/托盘约定一致),被占用则回退随机端口
-	addr, uiPort := "", 0
-	if port, err := srv.ServeOn(8765); err == nil {
-		addr, uiPort = fmt.Sprintf("http://127.0.0.1:%d/", port), port
-	} else if a, err2 := srv.Start(); err2 == nil {
-		addr = a
-		uiPort = portOf(a)
-	} else {
-		log.Fatalf("UI 服务启动失败: %v", err2)
-	}
-	// 记录端口,使托盘/面板启动器复用本进程的 UI 服务
-	if uiPort > 0 {
-		launcher.WritePort(uiPort)
-	}
-	fmt.Println("Control Center (Go) 已启动:", addr)
 
-	// OutLog 监听(关闭命令等)
+	// 跨进程导航:message-only 窗口(WM_COPYDATA 页名)→ GUI 深链通道
+	nav := make(chan string, 8)
+	win32.ServeNavWindow(func(p string) {
+		select {
+		case nav <- launcher.NormalizePage(p):
+		default:
+		}
+	})
+
+	// OutLog 监听(托盘/热键的关闭与语言切换命令)
 	go func() {
 		for {
 			sub, err := eventbus.Subscribe("OutLog")
@@ -100,12 +108,11 @@ func main() {
 					msg := e.Message
 					if contains(msg, "clevofnkey^204") {
 						// 关闭 CC:清标志并退出
+						log.Println("收到关闭命令,退出")
 						_ = as.WriteU8(appsettings.AddrXTUInfoRead, 0)
 						_ = as.WriteU8(appsettings.AddrCC30Launch, 0)
-						win32.FocusWindow("")
-						log.Println("收到关闭命令,退出")
 						time.Sleep(300 * time.Millisecond)
-						cleanupExit(as)
+						gui.RequestClose()
 					}
 					if contains(msg, "clevofnkey^102") {
 						log.Println("语言已切换")
@@ -117,9 +124,18 @@ func main() {
 		}
 	}()
 
-	// 以独立 GUI 应用窗口打开(Edge/Chrome app 模式,回退默认浏览器)
-	win32.OpenAppWindow(addr)
-	select {}
+	fmt.Println("Control Center (Go) 原生 GUI 已启动")
+
+	// Gio 要求平台主循环占用 main goroutine;GUI 事件循环放独立 goroutine,
+	// Run 返回(窗口关闭/托盘关闭命令)即清理退出。
+	go func() {
+		err := gui.Run(be, page, nav, nil)
+		if err != nil {
+			log.Printf("GUI 退出: %v", err)
+		}
+		cleanupExit(as)
+	}()
+	app.Main()
 }
 
 func cleanupExit(as *appsettings.Store) {
@@ -146,15 +162,4 @@ func exitProcess() {
 	// cpuoc 包引用仅为保持与原版关闭序列一致的语义
 	_ = cpuoc.WaitXTUIdle
 	log.Fatal("退出")
-}
-
-// portOf 从 "http://127.0.0.1:PORT/" 解析端口。
-func portOf(addr string) int {
-	i := strings.LastIndex(addr, ":")
-	if i < 0 {
-		return 0
-	}
-	var p int
-	fmt.Sscanf(strings.Trim(addr[i+1:], "/"), "%d", &p)
-	return p
 }
