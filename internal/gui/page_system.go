@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"time"
 
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 )
@@ -130,9 +134,9 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 		mhz, temp = live.Ci.CPUMHz, live.Ci.CPUTemp
 	}
 	return col(gtx,
-		// CPU 大表盘
+		// CPU 大表盘(动画:指针平滑扫向目标)
 		func(gtx C) D {
-			return dialSized(gtx, 330, 300, util, 100, dialOpt{
+			return dialSized(gtx, 330, 300, g.cpuDial.tick(util), 100, dialOpt{
 				ticks: 50, labels: []string{"0", "20", "40", "60", "80", "100"}, center: "CPU"})
 		},
 		vSpacer(4),
@@ -177,13 +181,17 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 		// 风扇控制面板
 		func(gtx C) D {
 			return panel(gtx, "风扇转速控制", func(gtx C) D {
-				var curveRows []layout.Widget
+				var curveCols []layout.FlexChild
 				names := [3]string{"CPU", "GPU1", "GPU2"}
 				for i := 0; i < 3; i++ {
 					i := i
-					curveRows = append(curveRows,
-						func(gtx C) D { return label(gtx, names[i]+" 曲线(温度℃/转速%)", 12, pal.Dim) },
-						func(gtx C) D { return g.curveInputs(gtx, i, s) })
+					curveCols = append(curveCols, layout.Rigid(func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D { return centerLabel(gtx, names[i]+" 曲线") },
+							func(gtx C) D { return g.curveEditor(gtx, i, s) },
+							func(gtx C) D { return centerLabel(gtx, "温度℃ / 转速% · 拖拽圆点") },
+						)
+					}))
 				}
 				return col(gtx,
 					func(gtx C) D {
@@ -223,7 +231,7 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 					},
 					vSpacer(10),
 					func(gtx C) D {
-						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, flexWrap(curveRows...)...)
+						return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx, curveCols...)
 					},
 					vSpacer(10),
 					func(gtx C) D {
@@ -238,40 +246,175 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 	)
 }
 
-// curveInputs 单风扇 3 组温度/转速输入。
-func (g *GUI) curveInputs(gtx C, i int, s *sysSnap) D {
+// curveEditor 单风扇可视化三点曲线编辑器(拖拽圆点调整;数值落回 curveEd,
+// 由"保存并启用"统一提交)。超越原版:原 CC40 与旧 Web 版均为纯数字输入。
+func (g *GUI) curveEditor(gtx C, i int, s *sysSnap) D {
 	tbl := s.tables[i]
 	ed := &g.w.curveEd[i]
-	vals := [6]int{tbl.T1, tbl.T2, tbl.T3, tbl.D1, tbl.D2, tbl.D3}
-	for j := 0; j < 6; j++ {
-		ed[j].sync(gtx, vals[j])
+	// 快照同步(拖拽中不回写,避免拽着的点被拉回)
+	if g.curveDragFan != i {
+		vals := [6]int{tbl.T1, tbl.T2, tbl.T3, tbl.D1, tbl.D2, tbl.D3}
+		for j := 0; j < 6; j++ {
+			ed[j].sync(gtx, vals[j])
+		}
 	}
-	return col(gtx,
-		func(gtx C) D {
-			return row(gtx, func(gtx C) D { return numBox(gtx, &ed[0], 62) }, hSpacer(6),
-				func(gtx C) D { return numBox(gtx, &ed[1], 62) })
-		},
-		vSpacer(4),
-		func(gtx C) D {
-			return row(gtx, func(gtx C) D { return numBox(gtx, &ed[2], 62) }, hSpacer(6),
-				func(gtx C) D { return numBox(gtx, &ed[3], 62) })
-		},
-		vSpacer(4),
-		func(gtx C) D {
-			return row(gtx, func(gtx C) D { return numBox(gtx, &ed[4], 62) }, hSpacer(6),
-				func(gtx C) D { return numBox(gtx, &ed[5], 62) })
-		},
-	)
+	pts := [3][2]int{
+		{maxI(ed[0].value(), 35), ed[3].value()},
+		{maxI(ed[1].value(), 35), ed[4].value()},
+		{maxI(ed[2].value(), 35), ed[5].value()},
+	}
+	w, h := gtx.Dp(158), gtx.Dp(112)
+	dragIdx := -1
+	if g.curveDragFan == i {
+		dragIdx = g.curveDragPt
+	}
+	dims := drawFanCurve(gtx, w, h, pts, dragIdx)
+
+	// 指针交互:按下命中检测(半径 16px)→ 拖拽实时改 T/D → 释放结束
+	defer clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops).Pop()
+	tag := &g.w.curveTag[i]
+	event.Op(gtx.Ops, tag)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch pe.Kind {
+		case pointer.Press:
+			for p := 0; p < 3; p++ {
+				c := curveXY(gtx, w, h, pts[p][0], pts[p][1])
+				if math.Hypot(float64(pe.Position.X-c.X), float64(pe.Position.Y-c.Y)) < 16 {
+					g.curveDragFan, g.curveDragPt = i, p
+					g.win.Invalidate()
+					break
+				}
+			}
+		case pointer.Drag:
+			if g.curveDragFan == i {
+				nt, nd := curveTD(gtx, w, h, pe.Position.X, pe.Position.Y)
+				p := g.curveDragPt
+				// 夹紧并保持 T1 < T2 < T3
+				lo, hi := 35, 100
+				if p > 0 {
+					lo = pts[p-1][0] + 1
+				}
+				if p < 2 {
+					hi = pts[p+1][0] - 1
+				}
+				nt = clampI(nt, lo, hi)
+				ed[p].setText(nt)
+				ed[p+3].setText(nd)
+				g.win.Invalidate()
+			}
+		case pointer.Release, pointer.Cancel:
+			if g.curveDragFan == i {
+				g.curveDragFan, g.curveDragPt = -1, -1
+				g.win.Invalidate()
+			}
+		}
+	}
+	return dims
 }
 
 func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
-	kbDuty, kbRpm := 0, 0
+	kbDuty, kbRpm, kbTemp := 0, 0, 0
 	gDuty, gRpm, gTemp := 0, 0, 0
+	cpuMHz := 0
 	if live != nil {
-		kbDuty, kbRpm = live.Live.CPU.Duty, live.Live.CPU.RPM
+		kbDuty, kbRpm, kbTemp = live.Live.CPU.Duty, live.Live.CPU.RPM, live.Live.CPU.Temp
 		gDuty, gRpm, gTemp = live.Live.GPU1.Duty, live.Live.GPU1.RPM, live.Live.GPU1.Temp
+		cpuMHz = live.Ci.CPUMHz
 	}
+	gpuDead := gDuty == 0 && gRpm == 0 && gTemp == 0 // dGPU 断电(安静/安静增强)时 EC 全零
 	return col(gtx,
+		// CPU 监控:温度/利用率双曲线(2 分钟窗口)
+		func(gtx C) D {
+			return panel(gtx, "CPU 监控", func(gtx C) D {
+				g.histMu.Lock()
+				tempH := append([]float64(nil), g.cpuTempH...)
+				utilH := append([]float64(nil), g.cpuUtilH...)
+				g.histMu.Unlock()
+				return col(gtx,
+					func(gtx C) D {
+						return drawMultiChart(gtx, 120, []chartSeries{
+							{data: tempH, max: 100, col: pal.Yellow, label: "温度℃"},
+							{data: utilH, max: 100, col: pal.Cyan, label: "利用率%"},
+						})
+					},
+					func(gtx C) D {
+						return label(gtx, fmt.Sprintf("当前频率 %d MHz · 每 2 秒采样,最近 2 分钟", cpuMHz), 11, pal.Dim)
+					})
+			})
+		},
+		// 风扇转速双表盘(动画 + 温度标签)
+		func(gtx C) D {
+			return panel(gtx, "风扇转速", func(gtx C) D {
+				dialCol := func(rpm, duty, temp int, anim *animVal, name string) layout.Widget {
+					return func(gtx C) D {
+						gtx.Constraints.Max.X = gtx.Dp(180)
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D {
+								return dialSized(gtx, 150, 140, anim.tick(float32(duty)), 100,
+									dialOpt{ticks: 30, color: pal.Lime, center: fmt.Sprintf("%d%%", duty)})
+							}),
+							layout.Rigid(func(gtx C) D {
+								if rpm == 0 && temp == 0 {
+									return label(gtx, name+" 风扇 无数据", 13, pal.Dim)
+								}
+								return label(gtx, fmt.Sprintf("%s %d RPM · %d℃", name, rpm, temp), 13, pal.Dim)
+							}),
+						)
+					}
+				}
+				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
+					layout.Rigid(dialCol(kbRpm, kbDuty, kbTemp, &g.fanCpuDial, "CPU")),
+					layout.Rigid(dialCol(gRpm, gDuty, gTemp, &g.fanGpuDial, "GPU")),
+				)
+			})
+		},
+		// GPU 资讯(dGPU 断电时状态化显示,不再出现误导性 0/—)
+		func(gtx C) D {
+			return panel(gtx, "GPU 资讯", func(gtx C) D {
+				readyTxt := "未就绪"
+				if s.gpu.Ready {
+					readyTxt = "就绪"
+				}
+				if gpuDead {
+					return col(gtx,
+						func(gtx C) D {
+							return row(gtx, func(gtx C) D { return badge(gtx, "独显已断电", "warn") },
+								hSpacer(10),
+								func(gtx C) D { return label(gtx, "安静模式 / 安静增强下 EC 不上报独显数据", 12, pal.Dim) })
+						},
+						vSpacer(6),
+						func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt+" · "+orDash(s.gpu.Driver)) },
+					)
+				}
+				return col(gtx,
+					func(gtx C) D {
+						if s.gpu.BaseClock > 0 {
+							return col(gtx,
+								func(gtx C) D { return kvRow(gtx, "时序", fmt.Sprintf("%d MHz", s.gpu.BaseClock)) },
+								func(gtx C) D { return dotBar(gtx, clamp01(float32(s.gpu.BaseClock)/3000), true) })
+						}
+						return kvRow(gtx, "时序", "—")
+					},
+					vSpacer(6),
+					func(gtx C) D { return kvRow(gtx, "GPU 温度", fmt.Sprintf("%d ℃", gTemp)) },
+					func(gtx C) D { return dotBar(gtx, clamp01(float32(gTemp)/100), false) },
+					vSpacer(6),
+					func(gtx C) D { return kvRow(gtx, "风扇占空", fmt.Sprintf("%d %%", gDuty)) },
+					func(gtx C) D { return dotBar(gtx, clamp01(float32(gDuty)/100), false) },
+					vSpacer(6),
+					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt+" · "+orDash(s.gpu.Driver)) },
+				)
+			})
+		},
 		// 系统资讯
 		func(gtx C) D {
 			return panel(gtx, "系统资讯", func(gtx C) D {
@@ -282,51 +425,6 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 					func(gtx C) D { return kvRow(gtx, "BIOS", orDash(s.st.BIOS)) },
 					func(gtx C) D { return kvRow(gtx, "键盘灯", kbTypeName(int(s.st.KBType))) },
 					func(gtx C) D { return kvRow(gtx, "语言", fmt.Sprintf("%d", s.st.Language)) },
-				)
-			})
-		},
-		// 风扇转速双表盘(每列限宽 180,标签自然宽度居中于表盘下)
-		func(gtx C) D {
-			return panel(gtx, "风扇转速", func(gtx C) D {
-				dialCol := func(rpm, duty int, name string) layout.Widget {
-					return func(gtx C) D {
-						gtx.Constraints.Max.X = gtx.Dp(180)
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								return dialSized(gtx, 150, 140, float32(duty), 100,
-									dialOpt{ticks: 30, color: pal.Lime, center: fmt.Sprintf("%d%%", duty)})
-							}),
-							layout.Rigid(func(gtx C) D { return label(gtx, fmt.Sprintf("%s 风扇 %d RPM", name, rpm), 13, pal.Dim) }),
-						)
-					}
-				}
-				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
-					layout.Rigid(dialCol(kbRpm, kbDuty, "CPU")),
-					layout.Rigid(dialCol(gRpm, gDuty, "GPU")),
-				)
-			})
-		},
-		// GPU 资讯
-		func(gtx C) D {
-			return panel(gtx, "GPU 资讯", func(gtx C) D {
-				readyTxt := "未就绪"
-				if s.gpu.Ready {
-					readyTxt = "就绪"
-				}
-				return col(gtx,
-					func(gtx C) D {
-						return kvRow(gtx, "时序", fmt.Sprintf("%d MHz", s.gpu.BaseClock))
-					},
-					func(gtx C) D { return dotBar(gtx, clamp01(float32(s.gpu.BaseClock)/3000), true) },
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "温度", fmt.Sprintf("%d ℃", gTemp)) },
-					func(gtx C) D { return dotBar(gtx, clamp01(float32(gTemp)/100), false) },
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "利用率", fmt.Sprintf("%d %%", gDuty)) },
-					func(gtx C) D { return dotBar(gtx, clamp01(float32(gDuty)/100), false) },
-					vSpacer(6),
-					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt+" · "+orDash(s.gpu.Driver)) },
 				)
 			})
 		},

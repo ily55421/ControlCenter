@@ -27,6 +27,7 @@ type widgets struct {
 	fanSave    widget.Clickable
 	fanReset   widget.Clickable
 	curveEd    [3][6]numField // 3 风扇 × (T1..T3, D1..D3)
+	curveTag   [3]struct{}    // 每风扇曲线编辑器的指针输入 tag
 	gpuSwitch  widget.Clickable
 
 	// LED 设备

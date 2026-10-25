@@ -16,6 +16,8 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/f32"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -23,6 +25,7 @@ import (
 	"gioui.org/widget/material"
 
 	"controlcenter/internal/cpuoc"
+	"controlcenter/internal/win32"
 )
 
 // g 当前 GUI 实例(Run 创建;主题与绘制辅助经它取主题)。
@@ -118,6 +121,16 @@ type GUI struct {
 
 	toastS toastState
 
+	// 表盘动画值(UI 线程;目标来自快照,每帧向目标收敛)
+	cpuDial, fanCpuDial, fanGpuDial, chDial animVal
+
+	// CPU 历史(2s 一点 × 60 = 2 分钟窗口;轮询协程写/UI 读)
+	cpuTempH []float64
+	cpuUtilH []float64
+
+	// 风扇曲线拖拽状态(-1 = 无)
+	curveDragFan, curveDragPt int
+
 	// 快照(原子指针,后台写/UI 读)
 	sys      atomic.Pointer[sysSnap]
 	live     atomic.Pointer[LiveSnap]
@@ -137,10 +150,39 @@ type GUI struct {
 	wheelAngle float64
 	wheelHex   string
 
-	// 色环指针输入 tag
+	// 指针/键盘输入 tag
 	wheelTag struct{}
+	keyTag   struct{}
 
 	w widgets
+}
+
+// animVal 表盘平滑动画:cur 向 target 指数收敛,收敛中持续请求下一帧。
+type animVal struct {
+	cur     float32
+	started bool
+}
+
+// tick 推进一帧并返回当前显示值;未收敛时请求重绘(60fps 平滑)。
+func (a *animVal) tick(target float32) float32 {
+	if !a.started {
+		a.started, a.cur = true, target*0.35 // 首帧从 35% 起扫入
+	}
+	diff := target - a.cur
+	if absF(diff) < 0.4 {
+		a.cur = target
+		return a.cur
+	}
+	a.cur += diff * 0.22
+	g.win.Invalidate()
+	return a.cur
+}
+
+func absF(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // Run 运行原生 GUI 直到窗口关闭(或收到退出命令)。
@@ -304,6 +346,15 @@ func (g *GUI) pollLoop() {
 			live := g.be.FanLive()
 			ci, _, _ := g.be.CPUInfo()
 			g.live.Store(&LiveSnap{Live: live, Ci: ci})
+			// CPU 历史(温度/利用率,60 点滚动)—— 与快照同节奏写入
+			g.histMu.Lock()
+			g.cpuTempH = append(g.cpuTempH, float64(ci.CPUTemp))
+			g.cpuUtilH = append(g.cpuUtilH, float64(ci.CPUUtil))
+			if len(g.cpuTempH) > 60 {
+				g.cpuTempH = g.cpuTempH[1:]
+				g.cpuUtilH = g.cpuUtilH[1:]
+			}
+			g.histMu.Unlock()
 			g.win.Invalidate()
 		}
 		if page == pgEnergy && now.Sub(lastWatt) >= time.Second {
@@ -397,6 +448,10 @@ func (g *GUI) loadPref() {
 // ---------- 外壳布局 ----------
 
 func (g *GUI) layoutRoot(gtx C) D {
+	// 首帧:窗口句柄已就绪,应用深色标题栏(DWM);不支持的系统静默忽略
+	darkOnce.Do(func() { go win32.ApplyDarkOwnWindows() })
+	// 全局快捷键:Ctrl+1..9 直达页
+	g.hotkeys(gtx)
 	// 背景底色
 	fillRect(gtx, pal.BG)
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -409,6 +464,28 @@ func (g *GUI) layoutRoot(gtx C) D {
 			)
 		}),
 	)
+}
+
+var darkOnce sync.Once
+
+// hotkeys Ctrl+1..9 切页(空 Name 过滤器匹配全部按键,再按名称分发)。
+func (g *GUI) hotkeys(gtx C) {
+	event.Op(gtx.Ops, &g.keyTag)
+	for {
+		ev, ok := gtx.Event(key.Filter{Required: key.ModShortcut})
+		if !ok {
+			return
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		if len(ke.Name) == 1 && ke.Name[0] >= '1' && ke.Name[0] <= '9' {
+			if p := int(ke.Name[0] - '1'); p < pgCount {
+				g.navTo(p)
+			}
+		}
+	}
 }
 
 func (g *GUI) layoutSidebar(gtx C) D {

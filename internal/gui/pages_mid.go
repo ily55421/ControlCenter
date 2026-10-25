@@ -402,7 +402,7 @@ func (g *GUI) pageCharger(gtx C) D {
 					},
 					vSpacer(14),
 					func(gtx C) D {
-						return dialSized(gtx, 220, 200, float32(fc.Stop-40), 60, dialOpt{
+						return dialSized(gtx, 220, 200, g.chDial.tick(float32(fc.Stop-40)), 60, dialOpt{
 							ticks: 30, color: pal.Lime, labels: []string{"40", "60", "80", "100"}, center: fmt.Sprintf("%d%%", fc.Stop)})
 					},
 					func(gtx C) D { return centerLabel(gtx, fmt.Sprintf("阈值区间 %d%% → %d%%", fc.Start, fc.Stop)) })

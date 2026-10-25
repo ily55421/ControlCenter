@@ -850,3 +850,11 @@ func hsl2rgb(h, s, l float64) (int, int, int) {
 
 // rgbHex 颜色 → #rrggbb。
 func rgbHex(r, g, b int) string { return fmt.Sprintf("#%02x%02x%02x", r, g, b) }
+
+// maxI 取大者。
+func maxI(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

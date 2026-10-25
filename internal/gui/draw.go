@@ -3,6 +3,7 @@
 package gui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -375,5 +376,119 @@ func fnBsChip(gtx C) D {
 	replayText(gtx, c2, x, (h-td2.Size.Y)/2)
 	x += td2.Size.X + gtx.Dp(10)
 	replayText(gtx, c3, x, (h-td3.Size.Y)/2)
+	return D{Size: image.Pt(w, h)}
+}
+
+// ---------- 多序列实时图表(CPU 监控:温度/利用率) ----------
+
+// chartSeries 一条曲线(数据 0..max)。
+type chartSeries struct {
+	data  []float64
+	max   float64
+	col   color.NRGBA
+	label string
+}
+
+// drawMultiChart 双序列实时曲线:横向网格 + 图例当前值,60 点滚动窗口。
+// 超越原版的关键可视化:原版只有瞬时数字,无历史趋势。
+func drawMultiChart(gtx C, hDp int, series []chartSeries) D {
+	w := gtx.Constraints.Max.X
+	h := gtx.Dp(unit.Dp(hDp))
+	// 网格:25/50/75%
+	for i := 1; i < 4; i++ {
+		y := h * i / 4
+		fillArea(gtx, image.Rect(0, y, w, y+1), color.NRGBA{R: 0x15, G: 0x1A, B: 0x1E, A: 0xFF})
+	}
+	for _, s := range series {
+		if len(s.data) < 2 {
+			continue
+		}
+		pts := make([]f32.Point, len(s.data))
+		for i, v := range s.data {
+			x := float32(i) / 59 * float32(w)
+			y := float32(h) - clamp01(float32(v/s.max))*float32(h)
+			pts[i] = f32.Pt(x, y)
+		}
+		polyline(gtx, pts, px(gtx, 5), alpha(s.col, 0x28), false)
+		polyline(gtx, pts, px(gtx, 1.6), s.col, false)
+	}
+	// 图例(左上角):色块 + 标签 + 当前值
+	x := gtx.Dp(6)
+	for _, s := range series {
+		cur := s.label + " —"
+		if len(s.data) > 0 {
+			cur = fmt.Sprintf("%s %.0f", s.label, s.data[len(s.data)-1])
+		}
+		td, call := textDims(gtx, cur, 11, s.col)
+		fillArea(gtx, image.Rect(x, gtx.Dp(7), x+gtx.Dp(8), gtx.Dp(7)+gtx.Dp(3)), s.col)
+		replayText(gtx, call, x+gtx.Dp(12), gtx.Dp(5))
+		x += td.Size.X + gtx.Dp(26)
+	}
+	return D{Size: image.Pt(w, h)}
+}
+
+// ---------- 风扇曲线编辑器(可视化拖拽,超越原版的数字框) ----------
+
+// curvePad 编辑器内边距(dp)。
+const curvePad = 10
+
+// curveXY 温度/占空(35..100℃ × 0..100%)→ 画布坐标。
+func curveXY(gtx C, w, h int, t, d int) f32.Point {
+	p := gtx.Dp(unit.Dp(curvePad))
+	x := float32(p) + float32(t-35)/65*float32(w-2*p)
+	y := float32(h-p) - float32(d)/100*float32(h-2*p)
+	return f32.Pt(x, y)
+}
+
+// curveTD 画布坐标 → 温度/占空(四舍五入并夹紧到合法域)。
+func curveTD(gtx C, w, h int, x, y float32) (t, d int) {
+	p := float32(gtx.Dp(curvePad))
+	t = 35 + int((x-p)/float32(w-2*gtx.Dp(curvePad))*65+0.5)
+	d = int((float32(h)-p-y)/float32(h-2*gtx.Dp(curvePad))*100 + 0.5)
+	t = clampI(t, 35, 100)
+	d = clampI(d, 0, 100)
+	return
+}
+
+// drawFanCurve 单风扇三点曲线编辑区(只画;拖拽交互在 page_system 处理)。
+// pts 为三点 (T,D);dragIdx 当前拖拽点(-1 无)。
+func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx int) D {
+	// 背景网格:温度 50/65/80/95 竖线,占空 25/50/75 横线
+	gridCol := color.NRGBA{R: 0x15, G: 0x1A, B: 0x1E, A: 0xFF}
+	pad := gtx.Dp(curvePad)
+	for t := 50; t <= 95; t += 15 {
+		x := int(curveXY(gtx, w, h, t, 0).X)
+		fillArea(gtx, image.Rect(x, pad, x+1, h-pad), gridCol)
+	}
+	for d := 25; d <= 75; d += 25 {
+		y := int(curveXY(gtx, w, h, 35, d).Y)
+		fillArea(gtx, image.Rect(pad, y, w-pad, y+1), gridCol)
+	}
+	// 曲线:左沿 → 三点 → (100,100)
+	pp := make([]f32.Point, 0, 5)
+	pp = append(pp, f32.Pt(float32(pad), curveXY(gtx, w, h, pts[0][0], pts[0][1]).Y))
+	for _, p := range pts {
+		pp = append(pp, curveXY(gtx, w, h, p[0], p[1]))
+	}
+	pp = append(pp, f32.Pt(float32(w-pad), float32(h-pad)))
+	polyline(gtx, pp, px(gtx, 4), alpha(pal.Cyan, 0x30), false)
+	polyline(gtx, pp, px(gtx, 1.5), pal.Cyan, false)
+	// 拖拽点:辉光圆 + 白芯;拖拽中放大
+	for i, p := range pts {
+		c := curveXY(gtx, w, h, p[0], p[1])
+		r := px(gtx, 4.5)
+		if i == dragIdx {
+			r = px(gtx, 6)
+		}
+		fillCircle(gtx, c.X, c.Y, r+px(gtx, 3), alpha(pal.Cyan, 0x35))
+		fillCircle(gtx, c.X, c.Y, r, pal.Cyan)
+		fillCircle(gtx, c.X, c.Y, r*0.45, color.NRGBA{R: 0x00, G: 0x16, B: 0x1C, A: 0xFF})
+		// 点位标签(温度,占空),贴点下方
+		lbl := fmt.Sprintf("%d,%d%%", p[0], p[1])
+		td, call := textDims(gtx, lbl, 10, pal.Dim)
+		lx := clampI(int(c.X)-td.Size.X/2, 2, w-td.Size.X-2)
+		ly := clampI(int(c.Y)+gtx.Dp(6), 0, h-td.Size.Y)
+		replayText(gtx, call, lx, ly)
+	}
 	return D{Size: image.Pt(w, h)}
 }
