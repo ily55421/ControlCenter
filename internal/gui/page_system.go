@@ -129,9 +129,11 @@ func (g *GUI) modeTabsRow(gtx C, s *sysSnap) D {
 
 func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 	util, mhz, temp := float32(0), 0, 0
+	fanTemps := [3]int{} // CPU/GPU1/GPU2 当前温度(曲线叠加工作点)
 	if live != nil {
 		util = float32(live.Ci.CPUUtil)
 		mhz, temp = live.Ci.CPUMHz, live.Ci.CPUTemp
+		fanTemps = [3]int{live.Live.CPU.Temp, live.Live.GPU1.Temp, live.Live.GPU2.Temp}
 	}
 	// 动画值:表盘与大数字共用,数字随动画平滑滚动(1s 采样也不显跳变)
 	utilA := g.cpuDial.tick(util)
@@ -192,7 +194,7 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 					curveCols = append(curveCols, layout.Rigid(func(gtx C) D {
 						return col(gtx,
 							func(gtx C) D { return centerLabel(gtx, names[i]+" 曲线") },
-							func(gtx C) D { return g.curveEditor(gtx, i, s) },
+							func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) },
 							func(gtx C) D { return centerLabel(gtx, "温度℃ / 转速% · 拖拽圆点") },
 						)
 					}))
@@ -252,7 +254,7 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 
 // curveEditor 单风扇可视化三点曲线编辑器(拖拽圆点调整;数值落回 curveEd,
 // 由"保存并启用"统一提交)。超越原版:原 CC40 与旧 Web 版均为纯数字输入。
-func (g *GUI) curveEditor(gtx C, i int, s *sysSnap) D {
+func (g *GUI) curveEditor(gtx C, i int, s *sysSnap, curTemp int) D {
 	tbl := s.tables[i]
 	ed := &g.w.curveEd[i]
 	// 快照同步(拖拽中不回写,避免拽着的点被拉回)
@@ -272,7 +274,7 @@ func (g *GUI) curveEditor(gtx C, i int, s *sysSnap) D {
 	if g.curveDragFan == i {
 		dragIdx = g.curveDragPt
 	}
-	dims := drawFanCurve(gtx, w, h, pts, dragIdx)
+	dims := drawFanCurve(gtx, w, h, pts, dragIdx, curTemp)
 
 	// 指针交互:按下命中检测(半径 16px)→ 拖拽实时改 T/D → 释放结束
 	defer clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops).Pop()

@@ -231,22 +231,26 @@ func replayText(gtx C, call op.CallOp, x, y int) {
 
 // panel 角标面板:边框 + 四角 L 形标记 + 标题 + 内容。
 func panel(gtx C, title string, body layout.Widget) D {
-	return layout.Inset{Bottom: unit.Dp(14)}.Layout(gtx, func(gtx C) D {
+	return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx C) D {
 		// 先记录内容布局,得到尺寸;再画底;最后回放内容
 		macro := op.Record(gtx.Ops)
-		inner := layout.Inset{Top: unit.Dp(30), Right: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(16)}.Layout(gtx, body)
+		inner := layout.Inset{Top: unit.Dp(28), Right: unit.Dp(14), Bottom: unit.Dp(14), Left: unit.Dp(14)}.Layout(gtx, body)
 		call := macro.Stop()
 		w, h := inner.Size.X, inner.Size.Y
-		fillArea(gtx, image.Rect(0, 0, w, h), pal.Panel)
-		border(gtx, image.Rect(0, 0, w, h), pal.Line, 1)
+		r := gtx.Dp(8)
+		// 毛玻璃质感:半透明圆角底(透出窗口渐变背景)+ 圆角描边
+		rr := clip.UniformRRect(image.Rect(0, 0, w, h), r)
+		defer rr.Push(gtx.Ops).Pop()
+		paint.Fill(gtx.Ops, color.NRGBA{R: 0x0C, G: 0x10, B: 0x14, A: 0xC4})
+		defer clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.2}.Op().Push(gtx.Ops).Pop()
+		paint.Fill(gtx.Ops, pal.Line)
 		cornerMarks(gtx, w, h)
 		td, tcall := textDims(gtx, title, 12, color.NRGBA{R: 0xC2, G: 0xCC, B: 0xD4, A: 0xFF})
-		replayText(gtx, tcall, gtx.Dp(16), gtx.Dp(9)+(gtx.Dp(18)-td.Size.Y)/2)
+		replayText(gtx, tcall, gtx.Dp(16), gtx.Dp(8)+(gtx.Dp(16)-td.Size.Y)/2)
 		call.Add(gtx.Ops)
 		return D{Size: image.Pt(w, h)}
 	})
 }
-
 // border 矩形描边(4 条细矩形,避免 stroke 路径开销)。
 func border(gtx C, r image.Rectangle, col color.NRGBA, wdp int) {
 	w := gtx.Dp(unit.Dp(wdp))

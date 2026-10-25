@@ -101,6 +101,8 @@ type MenuItem struct {
 	Separator bool
 	Disabled  bool
 	Bold      bool
+	// Submenu 非空时作为弹出子菜单挂载(ID 被忽略,子项 ID 全局唯一)。
+	Submenu []MenuItem
 }
 
 // Tray 托盘图标 + 菜单。
@@ -259,10 +261,51 @@ func (t *Tray) showMenu() {
 		return
 	}
 	defer procDestroyMenu.Call(hmenu)
-	const ( mfString = 0; mfSeparator = 0x800; mfChecked = 8; mfDisabled = 2; mfBold = 0x10 )
+	const ( mfString = 0; mfSeparator = 0x800; mfChecked = 8; mfDisabled = 2; mfBold = 0x10; mfPopup = 0x10 )
+	// buildMenu 递归构建(含子菜单;子菜单句柄由系统随父菜单销毁)。
+	var buildMenu func(items []MenuItem) uintptr
+	buildMenu = func(items []MenuItem) uintptr {
+		h, _, _ := procCreateMenu.Call()
+		if h == 0 {
+			return 0
+		}
+		for _, it := range items {
+			if it.Separator {
+				procAppendMenu.Call(h, mfSeparator, 0, 0)
+				continue
+			}
+			if len(it.Submenu) > 0 {
+				if sub := buildMenu(it.Submenu); sub != 0 {
+					txt, _ := windows.UTF16PtrFromString(it.Text)
+					procAppendMenu.Call(h, uintptr(mfString|mfPopup), sub, uintptr(unsafe.Pointer(txt)))
+				}
+				continue
+			}
+			flags := uintptr(mfString)
+			if it.Checked {
+				flags |= mfChecked
+			}
+			if it.Disabled {
+				flags |= mfDisabled
+			}
+			if it.Bold {
+				flags |= mfBold
+			}
+			txt, _ := windows.UTF16PtrFromString(it.Text)
+			procAppendMenu.Call(h, flags, uintptr(it.ID), uintptr(unsafe.Pointer(txt)))
+		}
+		return h
+	}
 	for _, it := range menu {
 		if it.Separator {
 			procAppendMenu.Call(hmenu, mfSeparator, 0, 0)
+			continue
+		}
+		if len(it.Submenu) > 0 {
+			if sub := buildMenu(it.Submenu); sub != 0 {
+				txt, _ := windows.UTF16PtrFromString(it.Text)
+				procAppendMenu.Call(hmenu, uintptr(mfString|mfPopup), sub, uintptr(unsafe.Pointer(txt)))
+			}
 			continue
 		}
 		flags := uintptr(mfString)

@@ -170,12 +170,21 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 		idEnt = 1013
 		idQuietPlus = 1014
 		idLangBase = 1100
+		idPageBase = 1500 // 直达面板子菜单(与 gui 页序一致)
 		idExit = 1900
 	)
+	// 直达面板子菜单:与原生 GUI 九页一一对应
+	pages := []string{"系统监控", "LED 设备", "FlexiKey", "FlexiCharger", "CPU 超频", "GPU 超频", "电池", "节能计划", "偏好"}
+	pageKeys := []string{"system", "kb", "flexikey", "charger", "cpu", "gpu", "bat", "energy", "pref"}
 	update := func() {
 		cur := as.GetPowerMode()
+		var panelMenu []win32.MenuItem
+		for i, p := range pages {
+			panelMenu = append(panelMenu, win32.MenuItem{ID: idPageBase + i, Text: p})
+		}
 		tray.SetMenu([]win32.MenuItem{
 			{ID: idOpen, Text: "打开 Control Center"},
+			{Text: "打开面板 ▸", Submenu: panelMenu},
 			{Separator: true},
 			{ID: idQuiet, Text: "安静模式", Checked: cur == appsettings.Quiet},
 			{ID: idPwrSave, Text: "节能模式", Checked: cur == appsettings.PowerSaving},
@@ -193,6 +202,14 @@ func setupTray(tray *win32.Tray, pm *powermode.Engine, as *appsettings.Store) {
 		launcher.Open("system", launcher.MainWindowTitle)
 		_ = eventbus.WriteOut("clevofnkey^149")
 	})
+	// 直达面板:托盘子菜单 → launcher 激活主界面并切页
+	for i, key := range pageKeys {
+		key := key
+		tray.OnCommand(idPageBase+i, func() {
+			launcher.Open(key, launcher.MainWindowTitle)
+			_ = eventbus.WriteOut("clevofnkey^149")
+		})
+	}
 	modeCmd := func(m appsettings.ModeType) func() {
 		return func() { go pm.Change(m); time.Sleep(500 * time.Millisecond); update() }
 	}

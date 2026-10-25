@@ -128,14 +128,14 @@ func (g *GUI) pageKB(gtx C) D {
 									func(gtx C) D { return actBtn(gtx, &g.w.kbReset, "恢复默认", btnPlain, false) })
 							},
 							vSpacer(6),
-							func(gtx C) D { return label(gtx, "点击色环取色并下发到所选分区(WMI 103 · 0xF0-0xF6)", 12, pal.Dim) })
+							func(gtx C) D { return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(或用下方分区选择;WMI 103 · 0xF0-0xF6)", 12, pal.Dim) })
 					})
 				})
 		},
 		func(gtx C) D {
 			return panel(gtx, "LED 键盘", func(gtx C) D {
 				return col(gtx,
-					func(gtx C) D { return kbLayout(gtx, zoneP) },
+					func(gtx C) D { return kbLayout(gtx, zoneP, &g.w.kbGrid, nil) },
 					vSpacer(12),
 					func(gtx C) D {
 						return row(gtx,
@@ -160,7 +160,12 @@ func (g *GUI) wheelLayout(gtx C, sizeDp int) D {
 	if g.wheelAngle > 0 {
 		sel = &g.wheelAngle
 	}
-	dims := colorWheel(gtx, sizeDp, kbPartNames[g.w.kbPart.selected()], hex, sel)
+	// 选中键优先:中心显示该键所属分区名
+	zoneName := kbPartNames[g.w.kbPart.selected()]
+	if g.w.kbGrid.SelR >= 0 {
+		zoneName = "键:" + kbRows[g.w.kbGrid.SelR][g.w.kbGrid.SelC].label + " → " + kbPartNameOf(KBPartOf(g.w.kbGrid.SelR, g.w.kbGrid.SelC))
+	}
+	dims := colorWheel(gtx, sizeDp, zoneName, hex, sel)
 	// 指针输入区(裁剪到色环矩形;v0.10 输入模型:声明区域 + Filter 拉取)
 	defer clip.Rect(image.Rect(0, 0, s, s)).Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, &g.wheelTag)
@@ -178,6 +183,9 @@ func (g *GUI) wheelLayout(gtx C, sizeDp int) D {
 			r, gg, b := hsl2rgb(ang/(2*math.Pi), 1, 0.5)
 			g.wheelHex = fmt.Sprintf("rgb(%d,%d,%d)", r, gg, b)
 			part := kbPartVals[g.w.kbPart.selected()]
+			if g.w.kbGrid.SelR >= 0 {
+				part = KBPartOf(g.w.kbGrid.SelR, g.w.kbGrid.SelC)
+			}
 			cc := part
 			rr, ccc, bb := r, gg, b
 			g.run("已下发", -1, 0, func() error {
@@ -287,7 +295,7 @@ func (g *GUI) pageFlexikey(gtx C) D {
 				func(gtx C) D {
 					return panel(gtx, "键盘宏槽位", func(gtx C) D {
 						return col(gtx,
-							func(gtx C) D { return kbLayout(gtx, nil) },
+							func(gtx C) D { return kbLayout(gtx, nil, nil, nil) },
 							vSpacer(8),
 							func(gtx C) D {
 								return label(gtx, "宏键明细编辑请直接修改 profile.xml(键位/宏序列/文本宏/启动程序),此处选择配置档并下发到 HKFltr 过滤驱动。", 12, pal.Dim)
@@ -431,4 +439,14 @@ func (g *GUI) fcRadioRow(gtx C, clk *widget.Clickable, on bool, lbl, desc string
 			layout.Rigid(func(gtx C) D { return label(gtx, desc, 12, pal.Dim) }),
 		)
 	})
+}
+
+// kbPartNameOf 分区值 → 显示名。
+func kbPartNameOf(part string) string {
+	for i, v := range kbPartVals {
+		if v == part {
+			return kbPartNames[i]
+		}
+	}
+	return part
 }

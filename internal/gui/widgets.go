@@ -38,6 +38,7 @@ type widgets struct {
 	slH, slM   numField
 	slS        numField
 	kbPart     *dropdown
+	kbGrid     KBGrid // 逐键点选状态(SelR/SelC=-1 未选)
 	kbEff      *dropdown
 	kbBr       *neonSlider
 	kbApplyEff widget.Clickable
@@ -114,6 +115,7 @@ var langNames = []string{
 
 func (g *GUI) initWidgets() {
 	w := &g.w
+	w.kbGrid.SelR, w.kbGrid.SelC = -1, -1
 	w.fanOffset = newSlider(0, 100, false, func(v int) {
 		g.run("偏移已下发", -1, 0, func() error { g.be.SetFanOffset(v); return nil })
 	})

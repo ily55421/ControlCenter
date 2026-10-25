@@ -9,6 +9,7 @@ import (
 	"math"
 
 	"gioui.org/f32"
+	"gioui.org/widget"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -253,9 +254,15 @@ var kbRows = [][]kbKey{
 	{{"Ctrl", 1.3}, {"Fn", 1.1}, {"Win", 1.2}, {"Alt", 1.2}, {"", 4.6}, {"Alt", 1.2}, {"Menu", 1.2}, {"Ctrl", 1.3}, {"←", 0.9}, {"↓", 0.9}, {"→", 0.9}},
 }
 
-// kbLayout 键帽图;zoneColors 为 nil 时不发光,否则按 Web 规则给第 2~5 行分区上色。
-// zoneColors: [left, mid, right]。
-func kbLayout(gtx C, zoneColors *[3]color.NRGBA) D {
+// KBGrid 键帽交互状态(逐键点选;LED 页用)。
+type KBGrid struct {
+	Clk        [6][17]widget.Clickable
+	SelR, SelC int // 选中键(-1 无)
+}
+
+// kbLayout 键帽图;zoneColors nil 时不发光。grid 非 nil 时键帽可点选:
+// 点击选中(青色描边),供"点键取色"按该键所属分区下发。
+func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c int)) D {
 	gap := gtx.Dp(5)
 	keyH := gtx.Dp(36)
 	totalW := gtx.Constraints.Max.X
@@ -279,7 +286,28 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA) D {
 					col = zoneColors[2]
 				}
 			}
-			drawKeycap(gtx, image.Rect(x, y, x+kw, y+keyH), k.label, col)
+			rect := image.Rect(x, y, x+kw, y+keyH)
+			if grid != nil {
+				clk := &grid.Clk[ri][ci]
+				if clk.Clicked(gtx) {
+					grid.SelR, grid.SelC = ri, ci
+					if onTap != nil {
+						onTap(ri, ci)
+					}
+				}
+				sel := grid.SelR == ri && grid.SelC == ci
+				clk.Layout(gtx, func(gtx C) D {
+					drawKeycap(gtx, rect, k.label, col)
+					if sel {
+						border(gtx, rect.Inset(-1), pal.Cyan, 2)
+					} else if clk.Hovered() {
+						border(gtx, rect.Inset(-1), alpha(pal.Cyan, 0x50), 1)
+					}
+					return D{Size: rect.Size()}
+				})
+			} else {
+				drawKeycap(gtx, rect, k.label, col)
+			}
 			x += kw + gap
 		}
 		y += keyH + gap
@@ -287,6 +315,20 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA) D {
 	return D{Size: image.Pt(totalW, y-gap)}
 }
 
+// KBPartOf 键位 → 背光分区(主键区三段,其余行整键盘)。
+func KBPartOf(r, c int) string {
+	if r >= 1 && r <= 4 {
+		switch {
+		case c <= 5:
+			return "left"
+		case c <= 10:
+			return "mid"
+		default:
+			return "right"
+		}
+	}
+	return "all"
+}
 // drawKeycap 单个键帽。
 func drawKeycap(gtx C, r image.Rectangle, lbl string, zone color.NRGBA) {
 	fillArea(gtx, r, pal.KeyBG2)
@@ -452,7 +494,7 @@ func curveTD(gtx C, w, h int, x, y float32) (t, d int) {
 
 // drawFanCurve 单风扇三点曲线编辑区(只画;拖拽交互在 page_system 处理)。
 // pts 为三点 (T,D);dragIdx 当前拖拽点(-1 无)。
-func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx int) D {
+func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx, curTemp int) D {
 	// 背景网格:温度 50/65/80/95 竖线,占空 25/50/75 横线
 	gridCol := color.NRGBA{R: 0x15, G: 0x1A, B: 0x1E, A: 0xFF}
 	pad := gtx.Dp(curvePad)
@@ -473,6 +515,25 @@ func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx int) D {
 	pp = append(pp, f32.Pt(float32(w-pad), float32(h-pad)))
 	polyline(gtx, pp, px(gtx, 4), alpha(pal.Cyan, 0x30), false)
 	polyline(gtx, pp, px(gtx, 1.5), pal.Cyan, false)
+	// 当前温度叠加:温度竖线(黄)+ 曲线上的工作点(风扇调参所见即所得)
+	if curTemp > 0 {
+		ct := clampI(curTemp, 35, 100)
+		// 按三点曲线规则求当前占空:分段线性,两端夹紧
+		d := pts[0][1]
+		switch {
+		case ct >= pts[2][0]:
+			d = pts[2][1]
+		case ct >= pts[1][0]:
+			d = interp(ct, pts[1][0], pts[1][1], pts[2][0], pts[2][1])
+		case ct >= pts[0][0]:
+			d = interp(ct, pts[0][0], pts[0][1], pts[1][0], pts[1][1])
+		}
+		cx := int(curveXY(gtx, w, h, ct, d).X)
+		fillArea(gtx, image.Rect(cx, pad, cx+1, h-pad), alpha(pal.Yellow, 0x45))
+		wp := curveXY(gtx, w, h, ct, d)
+		fillCircle(gtx, wp.X, wp.Y, px(gtx, 6), alpha(pal.Yellow, 0x35))
+		fillCircle(gtx, wp.X, wp.Y, px(gtx, 3), pal.Yellow)
+	}
 	// 拖拽点:辉光圆 + 白芯;拖拽中放大
 	for i, p := range pts {
 		c := curveXY(gtx, w, h, p[0], p[1])
@@ -491,4 +552,12 @@ func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx int) D {
 		replayText(gtx, call, lx, ly)
 	}
 	return D{Size: image.Pt(w, h)}
+}
+
+// interp 分段线性插值:(x 在 x0..x1)→ y0..y1。
+func interp(x, x0, y0, x1, y1 int) int {
+	if x1 <= x0 {
+		return y0
+	}
+	return y0 + (y1-y0)*(x-x0)/(x1-x0)
 }
