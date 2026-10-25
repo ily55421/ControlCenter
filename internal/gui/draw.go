@@ -6,14 +6,21 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	draw "image/draw"
 	"math"
+	"os"
 
 	"gioui.org/f32"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
-	"gioui.org/widget"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
+	"sync"
 )
 
 // strokeSegs 一次 stroke 描多条不相连线段(共享路径,省 draw op)。
@@ -254,19 +261,140 @@ var kbRows = [][]kbKey{
 	{{"Ctrl", 1.3}, {"Fn", 1.1}, {"Win", 1.2}, {"Alt", 1.2}, {"", 4.6}, {"Alt", 1.2}, {"Menu", 1.2}, {"Ctrl", 1.3}, {"←", 0.9}, {"↓", 0.9}, {"→", 0.9}},
 }
 
-// KBGrid 键帽交互状态(逐键点选;LED 页用)。
+// KBGrid 键盘点选状态(单一热区 + 坐标换算;LED 页用)。
+// 92 个子 Clickable 在 panel 宏录制 + List 视口裁剪的组合下绘制/命中行为
+// 不可控(实测只剩首键),改为整块键盘一个热区,点击坐标反查键位。
 type KBGrid struct {
-	Clk        [6][17]widget.Clickable
-	SelR, SelC int // 选中键(-1 无)
+	Tag        event.Tag
+	SelR, SelC int         // 选中键(-1 无)
+	sz         image.Point // 最近一帧键盘尺寸(点击换算用)
 }
 
-// kbLayout 键帽图;zoneColors nil 时不发光。grid 非 nil 时键帽可点选:
-// 点击选中(青色描边),供"点键取色"按该键所属分区下发。
+// kbLayout 键盘可视化:渲染为离屏 image 再贴图(paint.ImageOp)。
+// 弃用矢量 op 流的原因:92 键的绘制在 panel 宏 + List 视口组合下出现
+// 系统性偏移/截断(多轮插桩无法根治),image 贴图 100% 确定性。
+// 键帽文字用 basicfont(拉丁,键帽标签全为拉丁/符号)。
+// 缓存键:宽度+选中键+分区色 —— 变化才重渲染,静止零开销。
 func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c int)) D {
-	gap := gtx.Dp(5)
-	keyH := gtx.Dp(36)
 	totalW := gtx.Constraints.Max.X
-	y := 0
+	// 交互:单一热区,点击坐标反查键位
+	defer func() {
+		if grid == nil {
+			return
+		}
+	}()
+	h := len(kbRows)*(36+5) - 5
+
+	// 缓存判定
+	selKey := -1
+	if grid != nil && grid.SelR >= 0 && grid.SelC < len(kbRows[grid.SelR]) {
+		selKey = grid.SelR*100 + grid.SelC
+	}
+	zoneKey := 0
+	if zoneColors != nil {
+		zoneKey = int(zoneColors[0].R)<<16 | int(zoneColors[0].G)<<8 | int(zoneColors[0].B)
+	}
+	cacheKey := fmt.Sprintf("%d|%d|%d", totalW, selKey, zoneKey)
+	kbImgMu.Lock()
+	if kbImg.key != cacheKey || kbImg.img == nil {
+		kbImg.img = renderKeyboardImage(totalW, selKey, zoneColors)
+		kbImg.key = cacheKey
+	}
+	imgOp := kbImg.op
+	if kbImg.key == cacheKey && kbImg.op == (paint.ImageOp{}) {
+		kbImg.op = paint.NewImageOp(kbImg.img)
+		imgOp = kbImg.op
+	}
+	kbImgMu.Unlock()
+
+	// 贴图
+	defer clip.Rect(image.Rect(0, 0, totalW, h)).Push(gtx.Ops).Pop()
+	imgOp.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+
+	// 选中键描边(矢量,实时)
+	if grid != nil && grid.SelR >= 0 {
+		rect := kbKeyRect(totalW, grid.SelR, grid.SelC)
+		border(gtx, rect.Inset(-1), pal.Cyan, 2)
+	}
+	// 点击热区 + 坐标反查
+	if grid != nil {
+		event.Op(gtx.Ops, grid.Tag)
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: grid.Tag, Kinds: pointer.Press})
+			if !ok {
+				break
+			}
+			pe, ok := ev.(pointer.Event)
+			if !ok || pe.Kind != pointer.Press {
+				continue
+			}
+			if r, c, hit := kbHitTest(totalW, int(pe.Position.X), int(pe.Position.Y)); hit {
+				grid.SelR, grid.SelC = r, c
+				if onTap != nil {
+					onTap(r, c)
+				}
+				g.win.Invalidate()
+			}
+		}
+	}
+	return D{Size: image.Pt(totalW, h)}
+}
+
+// kbKeyRect 键位 → 矩形(与 renderKeyboardImage 同一几何)。
+func kbKeyRect(totalW, ri, ci int) image.Rectangle {
+	gap, keyH := 5, 36
+	y := ri * (keyH + gap)
+	sum := 0.0
+	for _, k := range kbRows[ri] {
+		sum += float64(k.w)
+	}
+	x := 0
+	for i := 0; i < ci && i < len(kbRows[ri]); i++ {
+		x += int(float64(totalW-(len(kbRows[ri])-1)*gap)*float64(kbRows[ri][i].w)/sum) + gap
+	}
+	kw := int(float64(totalW-(len(kbRows[ri])-1)*gap) * float64(kbRows[ri][ci].w) / sum)
+	return image.Rect(x, y, x+kw, y+keyH)
+}
+
+// kbHitTest 屏幕坐标 → 键位。
+func kbHitTest(totalW, px, py int) (r, c int, hit bool) {
+	gap, keyH := 5, 36
+	r = py / (keyH + gap)
+	if r < 0 || r >= len(kbRows) || py > r*(keyH+gap)+keyH {
+		return 0, 0, false
+	}
+	x := 0
+	sum := 0.0
+	for _, k := range kbRows[r] {
+		sum += float64(k.w)
+	}
+	for ci, k := range kbRows[r] {
+		kw := int(float64(totalW-(len(kbRows[r])-1)*gap) * float64(k.w) / sum)
+		if px >= x && px < x+kw {
+			return r, ci, true
+		}
+		x += kw + gap
+	}
+	return 0, 0, false
+}
+
+var (
+	kbImgMu sync.Mutex
+	kbImg   struct {
+		key string
+		img *image.RGBA
+		op  paint.ImageOp
+	}
+)
+
+// renderKeyboardImage 离屏渲染 92 键(basicfont 拉丁标签)。
+func renderKeyboardImage(totalW, selKey int, zoneColors *[3]color.NRGBA) *image.RGBA {
+	gap, keyH := 5, 36
+	h := len(kbRows)*(keyH+gap) - gap
+	img := image.NewRGBA(image.Rect(0, 0, totalW, h))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.NRGBA{R: 0x0B, G: 0x0D, B: 0x0F, A: 0xFF}}, image.Point{}, draw.Src)
+
 	for ri, r := range kbRows {
 		sum := 0.0
 		for _, k := range r {
@@ -275,46 +403,51 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 		x := 0
 		for ci, k := range r {
 			kw := int(float64(totalW-(len(r)-1)*gap) * float64(k.w) / sum)
-			col := color.NRGBA{}
+			rect := image.Rect(x, ri*(keyH+gap), x+kw, ri*(keyH+gap)+keyH)
+			zone := color.NRGBA{}
 			if zoneColors != nil && ri >= 1 && ri <= 4 {
 				switch {
 				case ci <= 5:
-					col = zoneColors[0]
+					zone = zoneColors[0]
 				case ci <= 10:
-					col = zoneColors[1]
+					zone = zoneColors[1]
 				default:
-					col = zoneColors[2]
+					zone = zoneColors[2]
 				}
 			}
-			rect := image.Rect(x, y, x+kw, y+keyH)
-			if grid != nil {
-				clk := &grid.Clk[ri][ci]
-				if clk.Clicked(gtx) {
-					grid.SelR, grid.SelC = ri, ci
-					if onTap != nil {
-						onTap(ri, ci)
-					}
-				}
-				sel := grid.SelR == ri && grid.SelC == ci
-				clk.Layout(gtx, func(gtx C) D {
-					drawKeycap(gtx, rect, k.label, col)
-					if sel {
-						border(gtx, rect.Inset(-1), pal.Cyan, 2)
-					} else if clk.Hovered() {
-						border(gtx, rect.Inset(-1), alpha(pal.Cyan, 0x50), 1)
-					}
-					return D{Size: rect.Size()}
-				})
-			} else {
-				// 注意:直接绘制路径在 panel 宏录制中会出现内容偏移/裁剪(FlexiKey 页实测),
-				// 需要展示键盘的页面一律走 grid!=nil 的 Clickable 路径(此处仅为兜底)。
-				drawKeycap(gtx, rect, k.label, col)
+			// 键帽底(上亮下暗两段模拟渐变)
+			draw.Draw(img, rect, &image.Uniform{color.NRGBA{R: 0x19, G: 0x1D, B: 0x21, A: 0xFF}}, image.Point{}, draw.Src)
+			draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+rect.Dy()*2/5), &image.Uniform{color.NRGBA{R: 0x19, G: 0x1D, B: 0x21, A: 0xFF}}, image.Point{}, draw.Src)
+			// 分区光晕
+			if zone.R > 0 || zone.G > 0 || zone.B > 0 {
+				draw.Draw(img, image.Rect(rect.Min.X, rect.Max.Y-8, rect.Max.X, rect.Max.Y), &image.Uniform{color.NRGBA{R: zone.R, G: zone.G, B: zone.B, A: 0x30}}, image.Point{}, draw.Src)
+				draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+4), &image.Uniform{color.NRGBA{R: zone.R, G: zone.G, B: zone.B, A: 0x18}}, image.Point{}, draw.Src)
+			}
+			// 边框
+			borderCol := color.NRGBA{R: 0x23, G: 0x28, B: 0x2D, A: 0xFF}
+			if zone.R > 0 || zone.G > 0 || zone.B > 0 {
+				borderCol = color.NRGBA{R: zone.R, G: zone.G, B: zone.B, A: 0x77}
+			}
+			if ri*100+ci == selKey {
+				borderCol = color.NRGBA{R: 0x25, G: 0xC8, B: 0xFF, A: 0xFF}
+			}
+			draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+1), &image.Uniform{borderCol}, image.Point{}, draw.Src)
+			draw.Draw(img, image.Rect(rect.Min.X, rect.Max.Y-1, rect.Max.X, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
+			draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Min.X+1, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
+			draw.Draw(img, image.Rect(rect.Max.X-1, rect.Min.Y, rect.Max.X, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
+			// 标签
+			if k.label != "" {
+				w := len(k.label) * 7
+				tx := rect.Min.X + (rect.Dx()-w)/2
+				ty := rect.Min.Y + (rect.Dy()-13)/2
+				fd := font.Drawer{Dst: img, Src: image.White, Face: basicfont.Face7x13}
+				fd.Dot = fixed.P(tx, ty+11)
+				fd.DrawString(k.label)
 			}
 			x += kw + gap
 		}
-		y += keyH + gap
 	}
-	return D{Size: image.Pt(totalW, y-gap)}
+	return img
 }
 
 // KBPartOf 键位 → 背光分区(主键区三段,其余行整键盘)。
@@ -563,4 +696,13 @@ func interp(x, x0, y0, x1, y1 int) int {
 		return y0
 	}
 	return y0 + (y1-y0)*(x-x0)/(x1-x0)
+}
+
+func dbgLog(v ...any) {
+	f, err := os.OpenFile(`D:\code\ControlCenter\bin\dbg.txt`, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(f, v...)
+	f.Close()
 }

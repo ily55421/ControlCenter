@@ -116,11 +116,16 @@ var langNames = []string{
 func (g *GUI) initWidgets() {
 	w := &g.w
 	w.kbGrid.SelR, w.kbGrid.SelC = -1, -1
+	w.kbGrid.Tag = &w.kbGrid // event.Tag 必须非 nil
 	w.fanOffset = newSlider(0, 100, false, func(v int) {
 		g.run("偏移已下发", -1, 0, func() error { g.be.SetFanOffset(v); return nil })
 	})
 	w.blSlider = newSlider(0, 10, true, func(v int) {
 		g.run("蓝光过滤 "+itoa(v)+" 档", -1, 0, func() error { g.be.SetBlueLight(float64(v)); return nil })
+	})
+	// pfBL 偏好页蓝光滑杆(此前漏初始化,进入偏好页即 nil panic)
+	w.pfBL = newSlider(0, 10, true, func(v int) {
+		g.run("显示设置已应用", -1, 0, func() error { g.be.SetBlueLight(float64(v)); return nil })
 	})
 	w.kbPart = newDropdown(kbPartNames, 0, 160)
 	w.kbEff = newDropdown(kbEffNames, 0, 160)

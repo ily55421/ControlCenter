@@ -188,11 +188,17 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 				names := [3]string{"CPU", "GPU1", "GPU2"}
 				for i := 0; i < 3; i++ {
 					i := i
+					// 每列锁定 186dp:列内 centerLabel 返回全宽,会把横向 Flex
+					// 剩余空间吃光,第 2/3 列拿到 Max.X=0 而整体消失(实测)。
 					curveCols = append(curveCols, layout.Rigid(func(gtx C) D {
-						return col(gtx,
-							func(gtx C) D { return centerLabel(gtx, names[i]+" 曲线") },
-							func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) },
-							func(gtx C) D { return centerLabel(gtx, "温度℃ / 转速% · 拖拽圆点") },
+						gtx.Constraints.Min.X = gtx.Dp(186)
+						gtx.Constraints.Max.X = gtx.Dp(186)
+						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D { return label(gtx, names[i]+" 曲线", 12, pal.Dim) }),
+							layout.Rigid(vSpacer(4)),
+							layout.Rigid(func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) }),
+							layout.Rigid(vSpacer(2)),
+							layout.Rigid(func(gtx C) D { return label(gtx, "温度℃ / 转速% · 拖拽圆点", 11, pal.Dim) }),
 						)
 					}))
 				}
@@ -252,6 +258,7 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 // curveEditor 单风扇可视化三点曲线编辑器(拖拽圆点调整;数值落回 curveEd,
 // 由"保存并启用"统一提交)。超越原版:原 CC40 与旧 Web 版均为纯数字输入。
 func (g *GUI) curveEditor(gtx C, i int, s *sysSnap, curTemp int) D {
+	dbgLog("curveEd enter", i, "maxX", gtx.Constraints.Max.X)
 	tbl := s.tables[i]
 	ed := &g.w.curveEd[i]
 	// 快照同步(拖拽中不回写,避免拽着的点被拉回)
@@ -464,7 +471,10 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 								hSpacer(6), func(gtx C) D { return badge(gtx, gn, "") })
 						},
 						vSpacer(4),
-						func(gtx C) D { return actBtn(gtx, &g.w.gpuSwitch, "切换…", btnPlain, false) },
+						func(gtx C) D {
+							// 包一层 row:col 的 Rigid 会把按钮拉伸到全宽
+							return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.gpuSwitch, "切换…", btnPlain, false) })
+						},
 					)
 				},
 			)

@@ -10,9 +10,9 @@ import (
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
-	"gioui.org/unit"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"controlcenter/internal/keyboard"
@@ -63,8 +63,7 @@ func (g *GUI) pageKB(gtx C) D {
 		g.run("已恢复默认", pgKB, actDur, func() error { return g.be.KBCmd(KBRequest{Cmd: "reset"}) })
 	}
 	g.w.kbBr.syncExt(s.Brightness)
-	// 色环交互(点击取色并下发所选分区)
-	g.wheelLayout(gtx, 250)
+	// 色环交互在下方面板内 wheelLayout 一并处理(此处不再调用,避免色环双绘)
 
 	zone := [3]color.NRGBA{nrgba(s.LeftColor), nrgba(s.MidColor), nrgba(s.RightColor)}
 	var zoneP *[3]color.NRGBA
@@ -72,7 +71,9 @@ func (g *GUI) pageKB(gtx C) D {
 		zoneP = &zone
 	}
 
-	return grid2(gtx, 4, 5,
+	// 单列布局:双栏在特定窗口尺寸下触发 panel 宏内容跨栏/双绘(kbLayout/色环),
+	// 改为纵向全宽面板,确定性收敛。
+	return col(gtx,
 		func(gtx C) D {
 			return col(gtx,
 				func(gtx C) D {
@@ -137,7 +138,9 @@ func (g *GUI) pageKB(gtx C) D {
 									func(gtx C) D { return actBtn(gtx, &g.w.kbReset, "恢复默认", btnPlain, false) })
 							},
 							vSpacer(6),
-							func(gtx C) D { return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(WMI 103 · 0xF0-0xF6)", 11, pal.Dim) })
+							func(gtx C) D {
+								return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(WMI 103 · 0xF0-0xF6)", 11, pal.Dim)
+							})
 					})
 				})
 		},
@@ -395,7 +398,9 @@ func (g *GUI) pageCharger(gtx C) D {
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.fcApply, "应用", btnPri, false) },
 							hSpacer(12),
-							func(gtx C) D { return label(gtx, "下发:WMI4 sub31 · 记住选择,开机自动回写 EC", 12, pal.Dim) })
+							func(gtx C) D {
+								return label(gtx, "下发:WMI4 sub31 · 记住选择,开机自动回写 EC", 12, pal.Dim)
+							})
 					})
 				return col(gtx, rows...)
 			})
