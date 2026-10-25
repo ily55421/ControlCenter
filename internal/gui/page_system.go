@@ -146,23 +146,20 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 				ticks: 50, labels: []string{"0", "20", "40", "60", "80", "100"}, center: "CPU"})
 		},
 		vSpacer(4),
-		// 三格数字(动画平滑)
+		// 三格数字(动画平滑;三等分均匀分布,数字+标签成组:左组左对齐/中组居中/右组右对齐)
 		func(gtx C) D {
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Baseline}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return col(gtx, func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f", mhzA), 38) },
-						func(gtx C) D { return label(gtx, "MHz · 时序", 12, pal.Dim) })
-				}),
-				layout.Rigid(func(gtx C) D {
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f%%", utilA), 28) }),
-						layout.Rigid(func(gtx C) D { return label(gtx, "利用率", 12, pal.Dim) }))
-				}),
-				layout.Rigid(func(gtx C) D {
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.End}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return bigNum(gtx, fmt.Sprintf("%.0f", tempA), 38) }),
-						layout.Rigid(func(gtx C) D { return label(gtx, "℃ · 温度", 12, pal.Dim) }))
-				}),
+			statCol := func(num string, numSize float32, lbl string, align layout.Alignment) layout.Widget {
+				return func(gtx C) D {
+					return layout.Flex{Axis: layout.Vertical, Alignment: align}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { return bigNum(gtx, num, numSize) }),
+						layout.Rigid(func(gtx C) D { return label(gtx, lbl, 12, pal.Dim) }),
+					)
+				}
+			}
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1, statCol(fmt.Sprintf("%.0f", mhzA), 38, "MHz · 时序", layout.Start)),
+				layout.Flexed(1, statCol(fmt.Sprintf("%.0f%%", utilA), 30, "利用率", layout.Middle)),
+				layout.Flexed(1, statCol(fmt.Sprintf("%.0f", tempA), 38, "℃ · 温度", layout.End)),
 			)
 		},
 		vSpacer(18),

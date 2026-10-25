@@ -39,12 +39,12 @@ var pal = struct {
 	Cyan, CyanD, Lime, Yellow, Red, Blue color.NRGBA
 	KeyBG, KeyBG2, Track                 color.NRGBA
 }{
-	BG:     color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xFF},
-	Panel:  color.NRGBA{R: 0x0A, G: 0x0C, B: 0x0F, A: 0xFF},
-	Line:   color.NRGBA{R: 0x26, G: 0x2C, B: 0x33, A: 0xFF},
-	Tick:   color.NRGBA{R: 0x8F, G: 0x99, B: 0xA3, A: 0xFF},
-	Txt:    color.NRGBA{R: 0xE8, G: 0xEE, B: 0xF2, A: 0xFF},
-	Dim:    color.NRGBA{R: 0x66, G: 0x70, B: 0x7A, A: 0xFF},
+	BG:     color.NRGBA{R: 0x0D, G: 0x11, B: 0x17, A: 0xFF}, // 页面底(GitHub dark)
+	Panel:  color.NRGBA{R: 0x16, G: 0x1B, B: 0x22, A: 0xE0}, // 卡片底(半透明毛玻璃)
+	Line:   color.NRGBA{R: 0x30, G: 0x36, B: 0x3D, A: 0xFF}, // 卡片描边
+	Tick:   color.NRGBA{R: 0x8B, G: 0x94, B: 0x9E, A: 0xFF},
+	Txt:    color.NRGBA{R: 0xE6, G: 0xED, B: 0xF3, A: 0xFF},
+	Dim:    color.NRGBA{R: 0x8B, G: 0x94, B: 0x9E, A: 0xFF},
 	Cyan:   color.NRGBA{R: 0x25, G: 0xC8, B: 0xFF, A: 0xFF},
 	CyanD:  color.NRGBA{R: 0x0A, G: 0x7F, B: 0xA8, A: 0xFF},
 	Lime:   color.NRGBA{R: 0xC8, G: 0xFF, B: 0x00, A: 0xFF},
@@ -234,14 +234,14 @@ func panel(gtx C, title string, body layout.Widget) D {
 	return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx C) D {
 		// 先记录内容布局,得到尺寸;再画底;最后回放内容
 		macro := op.Record(gtx.Ops)
-		inner := layout.Inset{Top: unit.Dp(28), Right: unit.Dp(14), Bottom: unit.Dp(14), Left: unit.Dp(14)}.Layout(gtx, body)
+		inner := layout.Inset{Top: unit.Dp(30), Right: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(16)}.Layout(gtx, body)
 		call := macro.Stop()
 		w, h := inner.Size.X, inner.Size.Y
-		r := gtx.Dp(8)
+		r := gtx.Dp(10)
 		// 毛玻璃质感:半透明圆角底(透出窗口渐变背景)+ 圆角描边
 		rr := clip.UniformRRect(image.Rect(0, 0, w, h), r)
 		defer rr.Push(gtx.Ops).Pop()
-		paint.Fill(gtx.Ops, color.NRGBA{R: 0x0C, G: 0x10, B: 0x14, A: 0xC4})
+		paint.Fill(gtx.Ops, pal.Panel)
 		// 边框描边:画完立即弹,否则后续标题/内容会被裁到 1.2px 边框线上(视觉消失)
 		stOp := clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.2}.Op().Push(gtx.Ops)
 		paint.Fill(gtx.Ops, pal.Line)

@@ -104,31 +104,40 @@ func (g *GUI) pageKB(gtx C) D {
 				},
 				func(gtx C) D {
 					return panel(gtx, "彩色背光", func(gtx C) D {
+						// 8px 网格:分区行(标签+下拉) → 色环(210,左右留白) → 亮度(滑块与色环同宽) → 灯效行 → 提示
 						return col(gtx,
-							func(gtx C) D { return g.wheelLayout(gtx, 250) },
-							vSpacer(14),
-							func(gtx C) D { return centerRow(gtx, func(gtx C) D { return g.w.kbPart.layout(gtx) }) },
-							vSpacer(10),
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "亮度", 13, pal.Dim) },
-									hSpacer(10), func(gtx C) D { return label(gtx, "OFF", 12, pal.Dim) },
-									hSpacer(8),
-									layout.Flexed(1, func(gtx C) D { return g.w.kbBr.layout(gtx) }),
-									hSpacer(8),
-									func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.kbBr.value()), 14, pal.Lime) },
-									hSpacer(4), func(gtx C) D { return label(gtx, "4", 12, pal.Dim) })
+								return row(gtx, func(gtx C) D { return label(gtx, "分区", 13, pal.Dim) },
+									hSpacer(8), func(gtx C) D { return g.w.kbPart.layout(gtx) })
+							},
+							vSpacer(8),
+							func(gtx C) D {
+								return layout.Center.Layout(gtx, func(gtx C) D { return g.wheelLayout(gtx, 210) })
+							},
+							vSpacer(8),
+							func(gtx C) D {
+								return col(gtx,
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return label(gtx, "OFF", 11, pal.Dim) },
+											layout.Flexed(1, func(gtx C) D { return D{} }),
+											func(gtx C) D { return label(gtx, fmt.Sprintf("%d / 4", g.w.kbBr.value()), 12, pal.Lime) })
+									},
+									func(gtx C) D {
+										gtx.Constraints.Min.X = gtx.Constraints.Max.X
+										return g.w.kbBr.layout(gtx)
+									})
 							},
 							vSpacer(8),
 							func(gtx C) D {
 								return row(gtx, func(gtx C) D { return label(gtx, "灯效", 13, pal.Dim) },
-									hSpacer(10), func(gtx C) D { return g.w.kbEff.layout(gtx) },
-									hSpacer(12),
+									hSpacer(8), func(gtx C) D { return g.w.kbEff.layout(gtx) },
+									layout.Flexed(1, func(gtx C) D { return D{} }),
 									func(gtx C) D { return actBtn(gtx, &g.w.kbApplyEff, "应用灯效", btnPri, false) },
-									hSpacer(10),
+									hSpacer(8),
 									func(gtx C) D { return actBtn(gtx, &g.w.kbReset, "恢复默认", btnPlain, false) })
 							},
 							vSpacer(6),
-							func(gtx C) D { return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(或用下方分区选择;WMI 103 · 0xF0-0xF6)", 12, pal.Dim) })
+							func(gtx C) D { return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(WMI 103 · 0xF0-0xF6)", 11, pal.Dim) })
 					})
 				})
 		},
@@ -295,7 +304,7 @@ func (g *GUI) pageFlexikey(gtx C) D {
 				func(gtx C) D {
 					return panel(gtx, "键盘宏槽位", func(gtx C) D {
 						return col(gtx,
-							func(gtx C) D { return kbLayout(gtx, nil, nil, nil) },
+							func(gtx C) D { return kbLayout(gtx, nil, &g.w.kbGrid, nil) },
 							vSpacer(8),
 							func(gtx C) D {
 								return label(gtx, "宏键明细编辑请直接修改 profile.xml(键位/宏序列/文本宏/启动程序),此处选择配置档并下发到 HKFltr 过滤驱动。", 12, pal.Dim)

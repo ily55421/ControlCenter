@@ -9,11 +9,11 @@ import (
 	"math"
 
 	"gioui.org/f32"
-	"gioui.org/widget"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
 )
 
 // strokeSegs 一次 stroke 描多条不相连线段(共享路径,省 draw op)。
@@ -37,7 +37,7 @@ func dir(a float64) (float32, float32) { return float32(math.Cos(a)), float32(ma
 // ---------- 表盘 ----------
 
 type dialOpt struct {
-	ticks  int      // 刻度数(默认 50)
+	ticks  int // 刻度数(默认 50)
 	color  color.NRGBA
 	labels []string // 弧上刻度标签
 	center string   // 弧下中心文本
@@ -84,8 +84,8 @@ func drawDial(gtx C, val, maxV float32, o dialOpt) D {
 			a := a0 + (a1-a0)*float64(i)/float64(len(o.labels)-1)
 			c, s := dir(a)
 			td, call := textDims(gtx, t, 12, color.NRGBA{R: 0x8A, G: 0x94, B: 0x9E, A: 0xFF})
-			x := int(cx + c*(float32(R)-px(gtx, 22))) - td.Size.X/2
-			y := int(cy + s*(float32(R)-px(gtx, 22))) - td.Size.Y/2
+			x := int(cx+c*(float32(R)-px(gtx, 22))) - td.Size.X/2
+			y := int(cy+s*(float32(R)-px(gtx, 22))) - td.Size.Y/2
 			replayText(gtx, call, x, y)
 		}
 	}
@@ -173,7 +173,7 @@ func drawWattChart(gtx C, data []float64) D {
 func colorWheel(gtx C, sizeDp int, zoneName, hex string, selAngle *float64) D {
 	s := gtx.Dp(unit.Dp(sizeDp))
 	cx, cy := float32(s)/2, float32(s)/2
-	outer := float32(s)/2
+	outer := float32(s) / 2
 	inner := outer * 0.57
 	// 柔光晕:外圈 6 段宽弧,低透明度(替代 CSS blur)
 	haloCols := []color.NRGBA{pal.Red, pal.Yellow, pal.Lime, pal.Cyan, pal.Blue, color.NRGBA{R: 0xFF, G: 0x00, B: 0xFF, A: 0xFF}}
@@ -306,6 +306,8 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 					return D{Size: rect.Size()}
 				})
 			} else {
+				// 注意:直接绘制路径在 panel 宏录制中会出现内容偏移/裁剪(FlexiKey 页实测),
+				// 需要展示键盘的页面一律走 grid!=nil 的 Clickable 路径(此处仅为兜底)。
 				drawKeycap(gtx, rect, k.label, col)
 			}
 			x += kw + gap
@@ -329,6 +331,7 @@ func KBPartOf(r, c int) string {
 	}
 	return "all"
 }
+
 // drawKeycap 单个键帽。
 func drawKeycap(gtx C, r image.Rectangle, lbl string, zone color.NRGBA) {
 	fillArea(gtx, r, pal.KeyBG2)

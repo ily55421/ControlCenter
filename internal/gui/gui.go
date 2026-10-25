@@ -457,9 +457,9 @@ func (g *GUI) layoutRoot(gtx C) D {
 	w0, h0 := gtx.Constraints.Max.X, gtx.Constraints.Max.Y
 	fillArea(gtx, image.Rect(0, 0, w0, h0), pal.BG)
 	bands := []color.NRGBA{
-		{R: 0x0C, G: 0x0F, B: 0x13, A: 0xFF},
-		{R: 0x08, G: 0x0A, B: 0x0D, A: 0xFF},
-		{R: 0x04, G: 0x05, B: 0x07, A: 0xFF},
+		{R: 0x10, G: 0x15, B: 0x1C, A: 0xFF},
+		{R: 0x0B, G: 0x0F, B: 0x14, A: 0xFF},
+		{R: 0x07, G: 0x0A, B: 0x0E, A: 0xFF},
 	}
 	for i, c := range bands {
 		fillArea(gtx, image.Rect(0, h0*i/5, w0, h0*(i+1)/5), c)
@@ -503,7 +503,7 @@ func (g *GUI) layoutSidebar(gtx C) D {
 	if g.sideMin {
 		w = gtx.Dp(58)
 	}
-	fillArea(gtx, image.Rect(0, 0, w, gtx.Constraints.Max.Y), colorSafe(0x0B, 0x0D, 0x0F))
+	fillArea(gtx, image.Rect(0, 0, w, gtx.Constraints.Max.Y), colorSafe(0x01, 0x04, 0x09))
 	fillArea(gtx, image.Rect(w-1, 0, w, gtx.Constraints.Max.Y), colorSafe(0x15, 0x18, 0x1B))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
@@ -535,7 +535,7 @@ func (g *GUI) layoutSidebar(gtx C) D {
 					return clk.Layout(gtx, func(gtx C) D {
 						h := gtx.Dp(unit.Dp(itemH))
 						if active {
-							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x17, 0x19, 0x1C))
+							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x16, 0x1B, 0x22))
 							fillArea(gtx, image.Rect(0, 0, gtx.Dp(3), h), pal.Lime)
 						} else if clk.Hovered() {
 							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x10, 0x14, 0x1A))
