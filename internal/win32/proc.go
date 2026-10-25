@@ -343,9 +343,14 @@ func WindowByTitle(title string) uintptr {
 }
 
 // FocusWindowHandle 前置指定句柄的窗口。
+// FocusWindowHandle 前置指定句柄的窗口(最小化状态先恢复 —— 导航兜底:
+// 主窗口若被系统最小化,任何面板/托盘导航都应将其还原并前置)。
 func FocusWindowHandle(h uintptr) bool {
 	if h == 0 {
 		return false
+	}
+	if iconic, _, _ := procIsIconic.Call(h); iconic != 0 {
+		procShowWindow.Call(h, 9) // SW_RESTORE
 	}
 	procSetForegroundWnd.Call(h)
 	return true
@@ -436,3 +441,5 @@ func ShellExecuteOpen(target string) error {
 
 var _ = syscall.SyscallN
 var _ = os.Getenv
+
+var procIsIconic = moduser32.NewProc("IsIconic")

@@ -39,21 +39,22 @@ var pal = struct {
 	Cyan, CyanD, Lime, Yellow, Red, Blue color.NRGBA
 	KeyBG, KeyBG2, Track                 color.NRGBA
 }{
-	BG:     color.NRGBA{R: 0x0D, G: 0x11, B: 0x17, A: 0xFF}, // 页面底(GitHub dark)
-	Panel:  color.NRGBA{R: 0x16, G: 0x1B, B: 0x22, A: 0xE0}, // 卡片底(半透明毛玻璃)
-	Line:   color.NRGBA{R: 0x30, G: 0x36, B: 0x3D, A: 0xFF}, // 卡片描边
-	Tick:   color.NRGBA{R: 0x8B, G: 0x94, B: 0x9E, A: 0xFF},
-	Txt:    color.NRGBA{R: 0xE6, G: 0xED, B: 0xF3, A: 0xFF},
-	Dim:    color.NRGBA{R: 0x8B, G: 0x94, B: 0x9E, A: 0xFF},
-	Cyan:   color.NRGBA{R: 0x25, G: 0xC8, B: 0xFF, A: 0xFF},
-	CyanD:  color.NRGBA{R: 0x0A, G: 0x7F, B: 0xA8, A: 0xFF},
-	Lime:   color.NRGBA{R: 0xC8, G: 0xFF, B: 0x00, A: 0xFF},
-	Yellow: color.NRGBA{R: 0xFF, G: 0xC4, B: 0x00, A: 0xFF},
-	Red:    color.NRGBA{R: 0xFF, G: 0x3B, B: 0x4D, A: 0xFF},
-	Blue:   color.NRGBA{R: 0x2F, G: 0x7B, B: 0xFF, A: 0xFF},
-	KeyBG:  color.NRGBA{R: 0x19, G: 0x1D, B: 0x21, A: 0xFF},
-	KeyBG2: color.NRGBA{R: 0x0B, G: 0x0D, B: 0x0F, A: 0xFF},
-	Track:  color.NRGBA{R: 0x0C, G: 0x10, B: 0x13, A: 0xFF},
+	// 与原版 CC40 / Web UI CSS :root 完全一致(逐项对照 internal/ui/web/index.html)
+	BG:     color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xFF}, // --bg:#000 纯黑
+	Panel:  color.NRGBA{R: 0x08, G: 0x0A, B: 0x0C, A: 0xB8}, // --panel:rgba(8,10,12,.72)
+	Line:   color.NRGBA{R: 0x26, G: 0x2C, B: 0x33, A: 0xFF}, // --line
+	Tick:   color.NRGBA{R: 0x8F, G: 0x99, B: 0xA3, A: 0xFF}, // --tick
+	Txt:    color.NRGBA{R: 0xE8, G: 0xEE, B: 0xF2, A: 0xFF}, // --txt
+	Dim:    color.NRGBA{R: 0x66, G: 0x70, B: 0x7A, A: 0xFF}, // --dim
+	Cyan:   color.NRGBA{R: 0x25, G: 0xC8, B: 0xFF, A: 0xFF}, // --cyan
+	CyanD:  color.NRGBA{R: 0x0A, G: 0x7F, B: 0xA8, A: 0xFF}, // --cyan-d
+	Lime:   color.NRGBA{R: 0xC8, G: 0xFF, B: 0x00, A: 0xFF}, // --lime
+	Yellow: color.NRGBA{R: 0xFF, G: 0xC4, B: 0x00, A: 0xFF}, // --yellow
+	Red:    color.NRGBA{R: 0xFF, G: 0x3B, B: 0x4D, A: 0xFF}, // --red
+	Blue:   color.NRGBA{R: 0x2F, G: 0x7B, B: 0xFF, A: 0xFF}, // --blue
+	KeyBG:  color.NRGBA{R: 0x19, G: 0x1D, B: 0x21, A: 0xFF}, // 键帽渐变顶
+	KeyBG2: color.NRGBA{R: 0x0B, G: 0x0D, B: 0x0F, A: 0xFF}, // 键帽渐变底
+	Track:  color.NRGBA{R: 0x0C, G: 0x10, B: 0x13, A: 0xFF}, // 输入底
 }
 
 // alpha 返回带透明度的颜色副本。
@@ -230,29 +231,42 @@ func replayText(gtx C, call op.CallOp, x, y int) {
 // ---------- 角标面板 ----------
 
 // panel 角标面板:边框 + 四角 L 形标记 + 标题 + 内容。
+// spreadCn 中文标题字距(模拟 CSS letter-spacing:2px —— 每字符后插入薄空格)。
+func spreadCn(s string) string {
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs)*2)
+	for i, r := range rs {
+		if i > 0 {
+			out = append(out, '\u2009')
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
 func panel(gtx C, title string, body layout.Widget) D {
-	return layout.Inset{Bottom: unit.Dp(12)}.Layout(gtx, func(gtx C) D {
-		// 先记录内容布局,得到尺寸;再画底;最后回放内容
+	return layout.Inset{Bottom: unit.Dp(14)}.Layout(gtx, func(gtx C) D {
+		// 原版 .panel:直角 + 1px 边框 + 半透明底 + 四角角标;标题 13px/600/字距 2px
 		macro := op.Record(gtx.Ops)
 		inner := layout.Inset{Top: unit.Dp(30), Right: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(16)}.Layout(gtx, body)
 		call := macro.Stop()
 		w, h := inner.Size.X, inner.Size.Y
-		r := gtx.Dp(10)
-		// 毛玻璃质感:半透明圆角底(透出窗口渐变背景)+ 圆角描边
-		rr := clip.UniformRRect(image.Rect(0, 0, w, h), r)
-		defer rr.Push(gtx.Ops).Pop()
-		paint.Fill(gtx.Ops, pal.Panel)
-		// 边框描边:画完立即弹,否则后续标题/内容会被裁到 1.2px 边框线上(视觉消失)
-		stOp := clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1.2}.Op().Push(gtx.Ops)
-		paint.Fill(gtx.Ops, pal.Line)
-		stOp.Pop()
+		fillArea(gtx, image.Rect(0, 0, w, h), pal.Panel)
+		border(gtx, image.Rect(0, 0, w, h), pal.Line, 1)
 		cornerMarks(gtx, w, h)
-		td, tcall := textDims(gtx, title, 12, color.NRGBA{R: 0xC2, G: 0xCC, B: 0xD4, A: 0xFF})
-		replayText(gtx, tcall, gtx.Dp(16), gtx.Dp(8)+(gtx.Dp(16)-td.Size.Y)/2)
+		td, tcall := textDims(gtx, spreadCn(title), 13, color.NRGBA{R: 0xCF, G: 0xD6, B: 0xDC, A: 0xFF})
+		_ = td
+		callTitle := tcall
 		call.Add(gtx.Ops)
+		// 标题画在内容之上(占位:Top inset 已预留 14px;标题基线在其内)
+		replayText(gtx, callTitle, gtx.Dp(16), (gtx.Dp(30)-textH(gtx, 13))/2)
 		return D{Size: image.Pt(w, h)}
 	})
 }
+
+// textH 13sp 文字行高。
+func textH(gtx C, sp float32) int { return gtx.Sp(unit.Sp(sp)) }
+
 // border 矩形描边(4 条细矩形,避免 stroke 路径开销)。
 func border(gtx C, r image.Rectangle, col color.NRGBA, wdp int) {
 	w := gtx.Dp(unit.Dp(wdp))
@@ -792,7 +806,7 @@ func labelRow(gtx C, k string, w layout.Widget) D {
 
 // numField 单行数字输入框。
 type numField struct {
-	ed    widget.Editor
+	ed     widget.Editor
 	inited bool
 }
 
@@ -863,4 +877,32 @@ func maxI(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// bgTile 点阵背景纹理(原版 body 的 radial-gradient 5px 网格):
+// 离屏生成 64×64 tile(每 5px 一个 #0d1114 的 1px 点),drawBackdrop 平铺。
+var bgTile = func() paint.ImageOp {
+	tile := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	dot := color.NRGBA{R: 0x0D, G: 0x11, B: 0x14, A: 0xFF}
+	for y := 0; y < 64; y += 5 {
+		for x := 0; x < 64; x += 5 {
+			tile.Set(x, y, dot)
+		}
+	}
+	return paint.NewImageOp(tile)
+}()
+
+// drawBackdrop 纯黑底 + 点阵纹理平铺(原版 #000 + 5px 网格点)。
+func drawBackdrop(gtx C) {
+	w, h := gtx.Constraints.Max.X, gtx.Constraints.Max.Y
+	fillArea(gtx, image.Rect(0, 0, w, h), pal.BG)
+	const ts = 64
+	for y := 0; y < h; y += ts {
+		for x := 0; x < w; x += ts {
+			defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+			bgTile.Add(gtx.Ops)
+			defer clip.Rect(image.Rect(0, 0, ts, ts)).Push(gtx.Ops).Pop()
+			paint.PaintOp{}.Add(gtx.Ops)
+		}
+	}
 }

@@ -25,7 +25,8 @@ func Open(page, title string) {
 	}
 	p := NormalizePage(page)
 	if win32.NavNotify(p) {
-		win32.FocusWindow(title)
+		// title 是原版窗口名(从不匹配);前置本项目的原生主窗口
+		win32.FocusWindow(MainWindowTitle)
 		return
 	}
 	exe := filepath.Join(exeDir(), "ccapp.exe")

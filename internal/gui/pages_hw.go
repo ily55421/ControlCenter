@@ -351,7 +351,7 @@ func (g *GUI) pageEnergy(gtx C) D {
 							hSpacer(6), func(gtx C) D { return g.w.ecDL.layout(gtx) })
 					},
 					vSpacer(10),
-					func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) },
+func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) }), layout.Rigid(vSpacer(2))) },
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es1on) },
 							hSpacer(8),
@@ -361,7 +361,7 @@ func (g *GUI) pageEnergy(gtx C) D {
 							func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
 					},
 					vSpacer(6),
-					func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) },
+func(gtx C) D { return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) }), layout.Rigid(vSpacer(2))) },
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es2on) },
 							hSpacer(8),
