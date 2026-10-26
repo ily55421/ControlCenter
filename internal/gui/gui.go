@@ -10,18 +10,23 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"gioui.org/app"
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"controlcenter/internal/cpuoc"
@@ -86,9 +91,12 @@ type sysSnap struct {
 }
 
 // liveSnap 系统页 2s 轮询快照。
+// Util/FreqMHz/Temp 为自采样:page6 实时区依赖 BIOS/XTU 通道(无 XTU 服务的
+// 机器恒为零),利用率=GetSystemTimes 差分、频率=powrprof、温度=EC 风扇包。
 type LiveSnap struct {
-	Live FanLiveOut
-	Ci   cpuoc.Info
+	Live                FanLiveOut
+	Ci                  cpuoc.Info
+	Util, FreqMHz, Temp int
 }
 
 type cpuSnap struct {
@@ -113,6 +121,7 @@ type GUI struct {
 	page       int   // 当前页(UI 线程)
 	pageAtomic int32 // 轮询协程读取
 	sideMin    bool
+	maximized  bool // 窗口是否已最大化(自绘标题栏按钮图标随之切换)
 
 	navReq <-chan string // 跨进程深链(ccapp 注入)
 	msgCh  chan func()   // 后台协程 → UI 线程的 UI 更新
@@ -187,6 +196,92 @@ func absF(v float32) float32 {
 }
 
 // Run 运行原生 GUI 直到窗口关闭(或收到退出命令)。
+// 主窗口默认尺寸计算所需的布局常量(单位 Dp,与 layoutPage/layoutHeader/layoutModeline 一致)。
+const (
+	shellHeaderDp   = 46 // 顶栏
+	shellModelineDp = 26 // 型号栏
+	pageTopDp       = 12 // layoutPage 上边距
+	pageBottomDp    = 46 // layoutPage 下边距
+	pageSideDp      = 20 // layoutPage 左右边距(仅宽度用)
+	pageScrollDp    = 12 // scrolledPage 右缘滚动条占位
+
+	// 默认窗口宽度:窗口宽度 >= 1320 时右侧"资讯/偏好"子栅格才真正并排。
+	// 实测(内容宽 = 窗口宽 - 侧栏 200 - 边距 40 - 滚动条 12):
+	//   窗口 1000 → 系统页 1815 高 | 1160 → 1308 | 1240 → 1308 | 1320 → 1020 | 1400 → 1006
+	// 也就是说窄窗会让子栅格退化,整页高度暴涨,默认高度跟着顶穿屏幕工作区。
+	defaultWidthDp = 1400
+
+	// 各页内容自然高度实测(Dp @100% 缩放,不含页边距),按 defaultWidthDp 测得:
+	// 系统 1006 / LED 1057 / FlexiKey 468 / Charger 520 / CPU 754 /
+	// GPU 383 / 电池 276 / 节能 407 / 偏好 375。取最高一页。
+	// 内容布局变化时必须重新测量并同步此值
+	// (由 layout_measure_test.go 的 TestDefaultWindowFitsAllPages 守门)。
+	contentMaxDp = 1057
+
+	// 子栅格开始并排的窗口宽度阈值,以及退化后的高度上限(实测值)。
+	wideMinDp  = 1320
+	narrowMaxH = 1815
+)
+
+// windowHeightFor 返回完整展示最高一页所需的窗口客户区高度(Dp)。
+func windowHeightFor(contentDp int) int {
+	return shellHeaderDp + shellModelineDp + pageTopDp + pageBottomDp + contentDp
+}
+
+// defaultWindowSize 返回默认窗口客户区尺寸(Dp):
+// 宽度用 defaultWidthDp(双列布局在此宽度下才真正并排),
+// 高度按"最高一页内容 + 页边距 + 顶栏 + 型号栏"精确计算,
+// 并夹在屏幕工作区内:屏幕装不下时退化为滚动,而不是把底栏顶出屏幕。
+func defaultWindowSize() (w, h int) {
+	w = defaultWidthDp
+	h = windowHeightFor(contentMaxDp)
+
+	// 屏幕工作区是物理像素,窗口尺寸按 Dp 计,需换算后比较
+	sw, sh := win32.PrimaryWorkArea()
+	if sw <= 0 || sh <= 0 {
+		return w, h
+	}
+	scale := win32.DpiScale()
+	maxWDp := int(float64(sw)/scale) - 8 // 留一点余量给窗口边框/阴影
+	maxHDp := int(float64(sh)/scale) - 8
+
+	if w > maxWDp {
+		if maxWDp >= 1000 {
+			w = maxWDp
+		} else {
+			w = 1000 // 不低于 MinSize 宽度
+		}
+	}
+	// 宽度收窄后双列会退化、内容变高,用收窄后的宽度重算所需高度
+	if w < defaultWidthDp {
+		if need := windowHeightFor(contentHeightAt(w)); need > h {
+			h = need
+		}
+	}
+	if h > maxHDp {
+		h = maxHDp
+	}
+	minH := windowHeightFor(0) + 200 // 不低于一个可用的最小高度
+	if minH < 660 {
+		minH = 660
+	}
+	if h < minH {
+		h = minH
+	}
+	return w, h
+}
+
+// contentHeightAt 返回给定窗口宽度下最高一页的内容高度(Dp)。
+// 窗口宽度 >= wideMinDp 时用实测常量;更窄时子栅格退化,高度按实测上限估算,
+// 保证"算出来的默认窗口高度不会比实际内容矮"。
+func contentHeightAt(w int) int {
+	if w >= wideMinDp {
+		return contentMaxDp
+	}
+	return narrowMaxH
+}
+
+// Run 运行原生 GUI 直到窗口关闭(或收到退出命令)。
 // page: 深链页名(可空);nav: 跨进程页名通道(message-only 窗口注入);
 // onQuit: 窗口关闭/退出命令时回调(清理运行标志)。
 func Run(be *Backend, page string, nav <-chan string, onQuit func()) error {
@@ -196,8 +291,13 @@ func Run(be *Backend, page string, nav <-chan string, onQuit func()) error {
 		msgCh:  make(chan func(), 32),
 		quit:   onQuit,
 	}
+	defW, defH := defaultWindowSize()
+	// 无系统标题栏,由 layoutHeader 自绘(与暗色主题一体);
+	// Gio 的自定义装饰模式仍会处理窗口四边缩放命中区。
 	g.win.Option(app.Title("Control Center"),
-		app.Size(unit.Dp(1240), unit.Dp(820)), app.MinSize(unit.Dp(1000), unit.Dp(660)))
+		app.Decorated(false),
+		app.Size(unit.Dp(float32(defW)), unit.Dp(float32(defH))),
+		app.MinSize(unit.Dp(1000), unit.Dp(660)))
 	g.initWidgets()
 	if p, ok := pageAlias[page]; ok {
 		g.page = p
@@ -231,6 +331,10 @@ func Run(be *Backend, page string, nav <-chan string, onQuit func()) error {
 			gtx := app.NewContext(&g.ops, e)
 			g.layoutRoot(gtx)
 			e.Frame(gtx.Ops)
+		case app.ConfigEvent:
+			// 最大化状态由平台配置通知(自绘标题栏据此切换还原/最大化图标)
+			g.maximized = e.Config.Mode == app.Maximized
+			g.win.Invalidate()
 		}
 	}
 }
@@ -347,11 +451,23 @@ func (g *GUI) pollLoop() {
 			lastLive = now
 			live := g.be.FanLive()
 			ci, _, _ := g.be.CPUInfo()
-			g.live.Store(&LiveSnap{Live: live, Ci: ci})
+			// 实时数据自采样(不依赖 BIOS/XTU 通道)
+			util, freq := win32.CPULoadPercent(), win32.CPUFrequencyMHz()
+			temp := live.CPU.Temp // EC 风扇包自带 CPU 温度
+			if temp <= 0 {
+				temp = ci.CPUTemp // page6 兜底(有 XTU 服务的机器)
+			}
+			if util < 0 {
+				util = ci.CPUUtil
+			}
+			if freq < 0 {
+				freq = ci.CPUMHz
+			}
+			g.live.Store(&LiveSnap{Live: live, Ci: ci, Util: util, FreqMHz: freq, Temp: temp})
 			// CPU 历史(温度/利用率,60 点滚动,1s 采样 = 1 分钟窗口)
 			g.histMu.Lock()
-			g.cpuTempH = append(g.cpuTempH, float64(ci.CPUTemp))
-			g.cpuUtilH = append(g.cpuUtilH, float64(ci.CPUUtil))
+			g.cpuTempH = append(g.cpuTempH, float64(temp))
+			g.cpuUtilH = append(g.cpuUtilH, float64(util))
 			if len(g.cpuTempH) > 60 {
 				g.cpuTempH = g.cpuTempH[1:]
 				g.cpuUtilH = g.cpuUtilH[1:]
@@ -450,8 +566,17 @@ func (g *GUI) loadPref() {
 // ---------- 外壳布局 ----------
 
 func (g *GUI) layoutRoot(gtx C) D {
-	// 首帧:窗口句柄已就绪,应用深色标题栏(DWM);不支持的系统静默忽略
-	darkOnce.Do(func() { go win32.ApplyDarkOwnWindows() })
+	// 首帧:窗口句柄已就绪 —— 注入图标并应用深色标题栏(均在后台,避免阻塞渲染)
+	firstFrame.Do(func() {
+		go func() {
+			if h := win32.WindowByTitle("Control Center"); h != 0 {
+				if ico := extractedIconPath(); ico != "" {
+					win32.SetWindowIcon(h, ico)
+				}
+			}
+			win32.ApplyDarkOwnWindows()
+		}()
+	})
 	// 全局快捷键:Ctrl+1..9 直达页
 	g.hotkeys(gtx)
 	// 背景:原版纯黑 + 5px 点阵纹理
@@ -468,7 +593,8 @@ func (g *GUI) layoutRoot(gtx C) D {
 	)
 }
 
-var darkOnce sync.Once
+// firstFrame 首帧一次性初始化(图标注入 + DWM 深色),窗口句柄此时才有效。
+var firstFrame sync.Once
 
 // hotkeys Ctrl+1..9 切页(空 Name 过滤器匹配全部按键,再按名称分发)。
 func (g *GUI) hotkeys(gtx C) {
@@ -491,28 +617,36 @@ func (g *GUI) hotkeys(gtx C) {
 }
 
 func (g *GUI) layoutSidebar(gtx C) D {
-	// 原版 #side 规格:118px/#0b0d0f/右边框 #15181b;项 padding 15/13、图标 26、
-	// 文字 12(#59636d)、底分隔线 #101016;hover #0e1114;选中 #17191c + lime + 图标辉光。
-	w := gtx.Dp(unit.Dp(118))
+	// 单行布局:图标 + 文案 在同一行 Flex{Middle} 对齐(原来图标在上、文字在下的
+	// 竖排方案在窄侧栏里会被裁切,也是最刺眼的错位来源)。
+	w := gtx.Dp(unit.Dp(navW))
 	if g.sideMin {
-		w = gtx.Dp(58)
+		w = gtx.Dp(unit.Dp(navWMin))
 	}
-	fillArea(gtx, image.Rect(0, 0, w, gtx.Constraints.Max.Y), colorSafe(0x0B, 0x0D, 0x0F))
-	fillArea(gtx, image.Rect(w-1, 0, w, gtx.Constraints.Max.Y), colorSafe(0x15, 0x18, 0x1B))
+	h := gtx.Constraints.Max.Y
+	// 底:比页面底再深一档 + 右缘半透明分隔线(不用纯灰实线)
+	fillArea(gtx, image.Rect(0, 0, w, h), colBar)
+	fillArea(gtx, image.Rect(w-Snap(gtx, 1), 0, w, h), colLineSoft)
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// 收起/展开按钮
 		layout.Rigid(func(gtx C) D {
 			if g.w.sideToggle.Clicked(gtx) {
 				g.sideMin = !g.sideMin
 			}
 			return g.w.sideToggle.Layout(gtx, func(gtx C) D {
-				h := gtx.Dp(52)
-				fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x10, 0x13, 0x16))
-				fillArea(gtx, image.Rect(0, h-1, w, h), colorSafe(0x15, 0x18, 0x1B))
-				td, call := textDims(gtx, "≡", 16, colorSafe(0x9A, 0xA4, 0xAD))
-				replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
-				return D{Size: image.Pt(w, h)}
+				hh := Snap(gtx, shellHdrH)
+				if g.w.sideToggle.Hovered() {
+					fillArea(gtx, image.Rect(0, 0, w, hh), colHover)
+				}
+				hLine(gtx, image.Rect(0, hh-Snap(gtx, 1), w, hh), colLineSoft)
+				td, call := txtDims(gtx, "≡", textStyle{Size: fsTitle, Col: colText2})
+				replayText(gtx, call, (w-td.Size.X)/2, (hh-td.Size.Y)/2)
+				return D{Size: image.Pt(w, hh)}
 			})
 		}),
+		layout.Rigid(vSpacer(sp8)),
+		// 导航项:单行,图标 17dp + 11dp 间距 + 13sp 文案
 		layout.Rigid(func(gtx C) D {
 			var items []layout.Widget
 			for i := 0; i < pgCount; i++ {
@@ -524,39 +658,49 @@ func (g *GUI) layoutSidebar(gtx C) D {
 						g.navTo(i)
 					}
 					return clk.Layout(gtx, func(gtx C) D {
-						h := gtx.Dp(76) // 15+26+7+~15+13 = 76
-						if active {
-							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x17, 0x19, 0x1C))
-						} else if clk.Hovered() {
-							fillArea(gtx, image.Rect(0, 0, w, h), colorSafe(0x0E, 0x11, 0x14))
-						}
-						fillArea(gtx, image.Rect(0, h-1, w, h), colorSafe(0x10, 0x10, 0x16))
-						iconCol, lblCol := colorSafe(0x59, 0x63, 0x6D), colorSafe(0x59, 0x63, 0x6D)
-						if active {
-							iconCol, lblCol = pal.Lime, pal.Lime
-						} else if clk.Hovered() {
-							iconCol, lblCol = colorSafe(0xAE, 0xB8, 0xC1), colorSafe(0xAE, 0xB8, 0xC1)
-						}
-						// 内容宽度锁定为侧栏宽:否则 Flex 自然宽度左贴,
-						// Middle 在 26px 容器内"居中"等于没居中(图标全部偏左)。
+						hh := Snap(gtx, navH)
+						// 整行宽度锁定为侧栏宽:否则 Flex 自然宽度左贴,居中等于没居中
 						gtx.Constraints.Min.X = w
 						gtx.Constraints.Max.X = w
-						return layout.Inset{Top: unit.Dp(15), Bottom: unit.Dp(13)}.Layout(gtx, func(gtx C) D {
-							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx C) D {
-									glow := active // 原版 .on svg filter: drop-shadow lime
-									_ = glow
-									return drawIcon(gtx, pageIcons[i], 26, iconCol)
-								}),
-								layout.Rigid(vSpacer(7)),
-								layout.Rigid(func(gtx C) D {
-									if g.sideMin {
-										return D{}
-									}
-									return label(gtx, pageTitles[i], 12, lblCol)
-								}),
-							)
-						})
+						inset := Snap(gtx, sp8)
+						rowR := image.Rect(inset, 0, w-inset, hh)
+						rad := Snap(gtx, rSmall)
+
+						iconCol, lblCol := colText3, colText2
+						switch {
+						case active:
+							// 选中:青色 12% 底 + 左侧 3dp 强调条
+							fillRR(gtx, rowR, rad, alpha(colAccent, 0x1C))
+							fillRR(gtx, image.Rect(inset, hh/2-Snap(gtx, 8), inset+Snap(gtx, 3), hh/2+Snap(gtx, 8)),
+								Snap(gtx, 2), colAccent)
+							iconCol, lblCol = colAccent, colText
+						case clk.Hovered():
+							fillRR(gtx, rowR, rad, alpha(colText, 0x0A))
+							iconCol, lblCol = colText2, colText
+						}
+
+						iconSz := Snap(gtx, navIconDp)
+						gap := Snap(gtx, sp10)
+						// 文本只录一次:先量尺寸(录制,不输出),再按内容整体居中回放
+						var lblD D
+						var lblCall op.CallOp
+						tw := 0
+						if !g.sideMin {
+							lblD, lblCall = txtDims(gtx, pageTitles[i], textStyle{Size: fsBig, Col: lblCol})
+							tw = lblD.Size.X
+						}
+						content := iconSz
+						if !g.sideMin {
+							content = iconSz + gap + tw
+						}
+						x := (w - content) / 2
+						icOff := op.Offset(image.Pt(x, (hh-iconSz)/2)).Push(gtx.Ops)
+						drawIconOn(gtx, pageIcons[i], navIconDp, iconCol, colBar)
+						icOff.Pop()
+						if !g.sideMin {
+							replayText(gtx, lblCall, x+iconSz+gap, (hh-gtx.Sp(unit.Sp(fsBig)))/2)
+						}
+						return D{Size: image.Pt(w, hh)}
 					})
 				})
 			}
@@ -569,18 +713,107 @@ func colorSafe(r, gg, b uint8) color.NRGBA {
 	return color.NRGBA{R: r, G: gg, B: b, A: 0xFF}
 }
 
+// 标题栏右侧控件的布局尺寸(全部由这里推导,避免拖动区/按钮/信息按钮互相重叠)。
+const (
+	winBtnDp   = 36 // 最小化/最大化/关闭按钮宽
+	infoBtnDp  = 32 // 信息按钮宽
+	headerGap  = 8  // 控件之间的间距
+	headerPadR = 4  // 右侧留白
+)
+
+// layoutHeader 自绘标题栏(系统标题栏已去除,配合 win32.RemoveCaption)。
+// 左:应用图标 + 标题;中:整条可拖动(ActionInputOp 让 Gio 回 HTCAPTION);
+// 右:信息按钮 + 最小化/最大化/关闭 三枚自绘按钮(从右往左依次排列,互不重叠)。
 func (g *GUI) layoutHeader(gtx C) D {
-	// 原版 header:46px、垂直渐变 #0a0c0e→#050708、底边 #14171a;
-	// 标题 17px/600 居中;右上按钮 32×26 圆角 3 #101316 边 #23282d。
 	w := gtx.Constraints.Max.X
-	h := gtx.Dp(46)
-	fillArea(gtx, image.Rect(0, 0, w, h/2), colorSafe(0x0A, 0x0C, 0x0E))
-	fillArea(gtx, image.Rect(0, h/2, w, h), colorSafe(0x05, 0x07, 0x08))
-	fillArea(gtx, image.Rect(0, h-1, w, h), colorSafe(0x14, 0x17, 0x1A))
-	td, call := textDims(gtx, "Control Center", 17, pal.Txt)
-	replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
-	// 右上按钮(平移后布局,变换用完即弹)
-	defer op.Affine(f32Translate(float32(w-gtx.Dp(44)), float32((h-gtx.Dp(26))/2))).Push(gtx.Ops).Pop()
+	h := Snap(gtx, shellHdrH)
+	// 底色:标题栏与侧栏同层(colBar),底边一条弱分隔线
+	fillArea(gtx, image.Rect(0, 0, w, h), colBar)
+	hLine(gtx, image.Rect(0, h-Snap(gtx, 1), w, h), colLineSoft)
+
+	// ---- 右侧控件坐标:从右边缘依次向左排 ----
+	btnW, btnH := gtx.Dp(winBtnDp), h
+	infoW := Snap(gtx, infoBtnDp)
+	padR := Snap(gtx, headerPadR)
+	gap := Snap(gtx, headerGap)
+	closeX := w - padR - btnW            // 最右:关闭
+	maxX := closeX - btnW                // 最大化
+	minX := maxX - btnW                  // 最小化
+	infoX := minX - gap - infoW          // 信息按钮在三枚窗口按钮左侧
+	controlsX := infoX                   // 右侧控件区起点
+	infoTop := (h - Snap(gtx, sp20) - Snap(gtx, sp6)) / 2
+
+	// ---- 拖动区:只铺到右侧控件左边,避免盖住按钮的点击 ----
+	dragW := controlsX
+	if dragW < 0 {
+		dragW = 0
+	}
+	dragClip := clip.Rect(image.Rect(0, 0, dragW, h)).Push(gtx.Ops)
+	system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
+
+	// ---- 左:图标 + 标题 ----
+	iconSize := Snap(gtx, 22)
+	ix, iy := Snap(gtx, sp16), (h-iconSize)/2
+	drawAppIcon(gtx, ix, iy, iconSize)
+	td, call := txtDims(gtx, "Control Center", textStyle{Size: fsBig, Col: colText, W: font.Medium})
+	replayText(gtx, call, ix+iconSize+Snap(gtx, sp10), (h-td.Size.Y)/2)
+	dragClip.Pop()
+
+	if g.w.winMin.Clicked(gtx) {
+		g.win.Perform(system.ActionMinimize)
+	}
+	if g.w.winMax.Clicked(gtx) {
+		if g.maximized {
+			g.win.Perform(system.ActionUnmaximize)
+		} else {
+			g.win.Perform(system.ActionMaximize)
+		}
+	}
+	if g.w.winClose.Clicked(gtx) {
+		g.win.Perform(system.ActionClose)
+	}
+
+	winBtn := func(x int, clk *widget.Clickable, kind string) {
+		defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
+		clk.Layout(gtx, func(gtx C) D {
+			hover := clk.Hovered()
+			if hover {
+				bg := colHover
+				if kind == "close" {
+					bg = colorSafe(0xC4, 0x2B, 0x1C) // 关闭按钮常规悬停用系统红
+				}
+				fillArea(gtx, image.Rect(0, 0, btnW, btnH), bg)
+			}
+			c := colText2
+			if hover {
+				c = colText
+			}
+			cx, cy := btnW/2, btnH/2
+			s := Snap(gtx, 5)
+			switch kind {
+			case "min": // 横线
+				fillArea(gtx, image.Rect(cx-s, cy, cx+s+1, cy+1), c)
+			case "max": // 方块(还原态画双框)
+				if g.maximized {
+					border(gtx, image.Rect(cx-s, cy-s+1, cx+s, cy+s+1), c, 1)
+					border(gtx, image.Rect(cx-s+2, cy-s-1, cx+s-2, cy+s-1), c, 1)
+				} else {
+					border(gtx, image.Rect(cx-s, cy-s, cx+s, cy+s), c, 1)
+				}
+			case "close": // 叉
+				fillLine(gtx, cx-s, cy-s, cx+s, cy+s, 1, c)
+				fillLine(gtx, cx-s, cy+s, cx+s, cy-s, 1, c)
+			}
+			return D{Size: image.Pt(btnW, btnH)}
+		})
+	}
+	winBtn(minX, &g.w.winMin, "min")
+	winBtn(maxX, &g.w.winMax, "max")
+	winBtn(closeX, &g.w.winClose, "close")
+
+	// ---- 信息按钮:排在最小化左侧,与窗口按钮同高居中 ----
+	infoOff := op.Offset(image.Pt(infoX, infoTop)).Push(gtx.Ops)
+	defer infoOff.Pop()
 	if g.w.info.Clicked(gtx) {
 		if s := g.sys.Load(); s != nil {
 			g.toast(fmt.Sprintf("%s %s · BIOS %s · ClevoID %s",
@@ -588,57 +821,207 @@ func (g *GUI) layoutHeader(gtx C) D {
 		}
 	}
 	g.w.info.Layout(gtx, func(gtx C) D {
-		bw, bh := gtx.Dp(32), gtx.Dp(26)
-		fillArea(gtx, image.Rect(0, 0, bw, bh), colorSafe(0x10, 0x13, 0x16))
-		border(gtx, image.Rect(0, 0, bw, bh), colorSafe(0x23, 0x28, 0x2D), 1)
-		td, call := textDims(gtx, "i", 13, colorSafe(0x9A, 0xA4, 0xAD))
-		replayText(gtx, call, (bw-td.Size.X)/2, (bh-td.Size.Y)/2)
+		bw, bh := infoW, Snap(gtx, sp20)+Snap(gtx, sp6)
+		r := image.Rect(0, 0, bw, bh)
+		rad := Snap(gtx, rSmall)
+		bg := colSunken
+		if g.w.info.Hovered() {
+			bg = colHover
+		}
+		fillRR(gtx, r, rad, colLine)
+		fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), bg)
+		id, icall := txtDims(gtx, "i", textStyle{Size: fsSmall, Col: colText2})
+		replayText(gtx, icall, (bw-id.Size.X)/2, (bh-id.Size.Y)/2)
 		return D{Size: image.Pt(bw, bh)}
 	})
 	return D{Size: image.Pt(w, h)}
 }
 
+// layoutModeline 信息条:一条轻量的型号/BIOS 摘要(mono 小字,降级为背景信息)。
 func (g *GUI) layoutModeline(gtx C) D {
 	w := gtx.Constraints.Max.X
-	h := gtx.Dp(26)
-	txt := "正在连接 ACPI 桥驱动…"
-	if s := g.sys.Load(); s != nil {
-		txt = fmt.Sprintf("%s %s · BIOS %s · %s · ClevoID %s · 客户 %d",
-			orDash(s.st.Manufacturer), s.st.Product, orDash(s.st.BIOS), orDash(s.st.CPU), fmt.Sprintf("%d", s.st.ClevoID), s.st.CustomerID)
+	h := Snap(gtx, 26)
+	s := "正在连接 ACPI 桥驱动…"
+	right := ""
+	if sp := g.sys.Load(); sp != nil {
+		s = fmt.Sprintf("%s %s · BIOS %s · %s", orDash(sp.st.Manufacturer), sp.st.Product,
+			orDash(sp.st.BIOS), orDash(sp.st.CPU))
+		right = fmt.Sprintf("CLEVO %d · CUSTOMER %d", sp.st.ClevoID, sp.st.CustomerID)
 	}
-	td, call := textDims(gtx, txt, 12, colorSafe(0x5F, 0x6A, 0x74))
-	replayText(gtx, call, gtx.Dp(20), (h-td.Size.Y)/2)
+	td, call := txtDims(gtx, s, textStyle{Size: fsMicro, Col: colText3})
+	replayText(gtx, call, Snap(gtx, sp20), (h-td.Size.Y)/2)
+	if right != "" {
+		rd, rcall := txtDims(gtx, right, textStyle{Size: fsTiny, Col: colText4})
+		replayText(gtx, rcall, w-Snap(gtx, sp20)-rd.Size.X, (h-rd.Size.Y)/2)
+	}
 	return D{Size: image.Pt(w, h)}
 }
 
 func (g *GUI) layoutPage(gtx C) D {
-	// 内容区:留边距 + 垂直滚动
+	// 内容区:留边距 + 自实现垂直滚动(滚轮 + 可拖滚动条)
 	return layout.Inset{Top: unit.Dp(12), Right: unit.Dp(20), Bottom: unit.Dp(46), Left: unit.Dp(20)}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		var lst layout.List
-		lst.Axis = layout.Vertical
+		var page layout.Widget
 		switch g.page {
 		case pgSystem:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageSystem(gtx) })
+			page = g.pageSystem
 		case pgKB:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageKB(gtx) })
+			page = g.pageKB
 		case pgFlexikey:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageFlexikey(gtx) })
+			page = g.pageFlexikey
 		case pgCharger:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageCharger(gtx) })
+			page = g.pageCharger
 		case pgCPU:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageCPU(gtx) })
+			page = g.pageCPU
 		case pgGPU:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageGPU(gtx) })
+			page = g.pageGPU
 		case pgBat:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageBat(gtx) })
+			page = g.pageBat
 		case pgEnergy:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pageEnergy(gtx) })
+			page = g.pageEnergy
 		case pgPref:
-			return lst.Layout(gtx, 1, func(gtx C, _ int) D { return g.pagePref(gtx) })
+			page = g.pagePref
 		}
-		return D{}
+		if page == nil {
+			return D{}
+		}
+		return g.scrolledPage(gtx, g.page, page)
 	})
+}
+
+// ---------- 页面滚动(自实现:滚轮 + 可拖滚动条) ----------
+//
+// 不用 layout.List 的原因:List 无公开滚动位置读取,画不了可拖滚动条。
+// 方案:每帧两遍布局 —— 测量 pass(gtx.Disabled,事件不消费)拿内容高;
+// 绘制 pass 在视口裁剪内按 offset 平移绘制,右缘画可拖滚动条。
+
+type scrollState struct {
+	offset   float32
+	contentH int
+	viewH    int
+}
+
+var (
+	pageScroll     [pgCount]scrollState
+	scrollTags     [pgCount]struct{}
+	scrollDrag     [pgCount]struct{}
+	scrollDragging [pgCount]bool
+	scrollDragY    [pgCount]int
+)
+
+// scrolledPage 页面垂直滚动:内容按自然高度绘制,视口裁剪 + 偏移平移,
+// 右缘绘制可拖滚动条(仅在内容超高时出现),滚轮与拖拽都可用。
+//
+// 两个曾导致"内容被截断且没有滚动条"的坑:
+//   - layout.Flexed(1, layoutPage) 传给页面的是 Exact 约束(Min.Y == Max.Y == 视口高),
+//     页面沿用该约束会把内容强行压成视口高 → contentH == viewH → maxOff 恒为 0;
+//     这里显式放开 Min.Y=0 / Max.Y=无穷,内容按自然高度排布。
+//   - 滚动条必须画在视口裁剪之外:原先用 defer clip 覆盖整页,滚动条位于裁剪区外被整条裁掉。
+func (g *GUI) scrolledPage(gtx C, page int, content layout.Widget) D {
+	sc := &pageScroll[page]
+	viewW, viewH := gtx.Constraints.Max.X, gtx.Constraints.Max.Y
+	barSpace := gtx.Dp(12) // 右缘留给滚动条
+	innerW := viewW - barSpace
+	if innerW < gtx.Dp(160) {
+		innerW = viewW
+	}
+	// 统一的内容约束:宽度锁满(panel 靠 Exact 宽度铺满,原来由 layoutPage 的 Min.X 保证)、
+	// 高度下限放开,让内容按自然高度排布
+	bodyGtx := func(gx C) C {
+		gx.Constraints.Min = image.Pt(innerW, 0)
+		gx.Constraints.Max = image.Pt(innerW, math.MaxInt32/2)
+		return gx
+	}
+	curMax := func() float32 {
+		m := float32(sc.contentH - viewH)
+		if m < 0 {
+			return 0
+		}
+		return m
+	}
+
+	// 内容:视口裁剪 + 垂直偏移;滚轮热区覆盖整个视口
+	clipStack := clip.Rect(image.Rect(0, 0, innerW, viewH)).Push(gtx.Ops)
+	event.Op(gtx.Ops, &scrollTags[page])
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &scrollTags[page], Kinds: pointer.Scroll})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Scroll {
+			sc.offset = clamp(sc.offset+pe.Scroll.Y*0.5, 0, curMax())
+			g.win.Invalidate()
+		}
+	}
+	off := int(sc.offset)
+	offStack := op.Offset(image.Pt(0, -off)).Push(gtx.Ops)
+	d := content(bodyGtx(gtx))
+	offStack.Pop()
+	clipStack.Pop()
+
+	// 用本帧实测高度更新滚动范围
+	sc.contentH, sc.viewH = d.Size.Y, viewH
+	maxOff := curMax()
+	if sc.offset > maxOff {
+		sc.offset = maxOff
+	}
+
+	// 滚动条(内容超高才显示)
+	if maxOff > 0 {
+		barW := gtx.Dp(4)
+		x0 := viewW - barW - gtx.Dp(5)
+		thumbH := int(float32(viewH) * float32(viewH) / float32(sc.contentH))
+		if minH := gtx.Dp(40); thumbH < minH {
+			thumbH = minH
+		}
+		if thumbH > viewH {
+			thumbH = viewH
+		}
+		thumbY := int(float32(viewH-thumbH) * clamp01(sc.offset/maxOff))
+		fillArea(gtx, image.Rect(x0, 0, x0+barW, viewH), alpha(pal.Line, 0x55))
+		fillArea(gtx, image.Rect(x0, thumbY, x0+barW, thumbY+thumbH), alpha(pal.Cyan, 0xA8))
+
+		// 拇指拖拽(热区比轨道宽 4dp,便于点中;按在拇指外时先对齐拇指中心)
+		hitArea := clip.Rect(image.Rect(x0-gtx.Dp(4), 0, x0+barW+gtx.Dp(4), viewH)).Push(gtx.Ops)
+		event.Op(gtx.Ops, &scrollDrag[page])
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: &scrollDrag[page], Kinds: pointer.Drag | pointer.Press | pointer.Release})
+			if !ok {
+				break
+			}
+			pe, ok := ev.(pointer.Event)
+			if !ok {
+				continue
+			}
+			switch pe.Kind {
+			case pointer.Press:
+				py := int(pe.Position.Y)
+				if py < thumbY || py > thumbY+thumbH {
+					// 点击轨道空白:把拇指中心移到点击处
+					thumbY = py - thumbH/2
+				}
+				scrollDragging[page] = true
+				scrollDragY[page] = py - thumbY
+				if span := viewH - thumbH; span > 0 {
+					sc.offset = clamp01(float32(thumbY)/float32(span)) * maxOff
+				}
+				g.win.Invalidate()
+			case pointer.Drag:
+				if !scrollDragging[page] {
+					continue
+				}
+				if span := viewH - thumbH; span > 0 {
+					frac := clamp01(float32(int(pe.Position.Y)-scrollDragY[page]) / float32(span))
+					sc.offset = frac * maxOff
+				}
+				g.win.Invalidate()
+			case pointer.Release:
+				scrollDragging[page] = false
+			}
+		}
+		hitArea.Pop()
+	}
+	return D{Size: image.Pt(viewW, viewH)}
 }
 
 // grid2 双列栅格(窄窗自动变单列),权重 wl:wr。

@@ -7,9 +7,12 @@ type widgets struct {
 	sideToggle, info widget.Clickable
 	nav              [pgCount]widget.Clickable
 
+	// 自绘标题栏按钮(系统标题栏已去除)
+	winMin, winMax, winClose widget.Clickable
+
 	// 系统监控
 	modeTab    [5]widget.Clickable
-	fanTab     [5]widget.Clickable // 对应 fanModes 下标 {0,1,6,3,5}
+	fanSeg     segmented // 风扇模式分段控件(单行等分,取代零散标签)
 	noiseless  widget.Bool
 	tileWin    widget.Clickable // 偏好磁贴
 	tileFnWin  widget.Clickable
@@ -45,13 +48,13 @@ type widgets struct {
 	kbReset    widget.Clickable
 
 	// FlexiKey
-	fkMainTab widget.Clickable
-	fkStatTab widget.Clickable
+	fkMainTab  widget.Clickable
+	fkStatTab  widget.Clickable
 	fkMouseTab widget.Clickable
-	fkProf    []widget.Clickable // 与快照 profiles 对齐(刷新时重建)
-	fkProfN   int
-	fkApply   widget.Clickable
-	fkDisable widget.Clickable
+	fkProf     []widget.Clickable // 与快照 profiles 对齐(刷新时重建)
+	fkProfN    int
+	fkApply    widget.Clickable
+	fkDisable  widget.Clickable
 
 	// FlexiCharger
 	fcMode  [3]widget.Clickable

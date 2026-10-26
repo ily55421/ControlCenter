@@ -179,3 +179,94 @@ func GetLidCloseAction() (ac, dc int, err error) {
 	}
 	return ac, dc, nil
 }
+
+var (
+	modPowrProf      = windows.NewLazySystemDLL("powrprof.dll")
+	procCallNtPower  = modPowrProf.NewProc("CallNtPowerInformation")
+	procGetSysTimes  = modkernel32.NewProc("GetSystemTimes")
+	procSysInfoAlloc = modkernel32.NewProc("GetProcessHeap")
+)
+
+type processorPowerInfo struct {
+	Number           uint32
+	MaxMhz           uint32
+	CurrentMhz       uint32
+	MhzLimit         uint32
+	MaxIdleState     uint32
+	CurrentIdleState uint32
+}
+
+var (
+	cpuTimesLast    [3]uint64 // idle, kernel, user
+	cpuTimesStarted bool
+	cpuLastPct      = -1 // 最近一次有效利用率;间隔过短时沿用它
+)
+
+// init 建立 CPU 利用率采样基线:否则进程内首次调用返回 -1,
+// 界面首帧会把利用率显示为 0%(看起来像"没读到数据")。
+func init() { CPULoadPercent() }
+
+// CPULoadPercent 采样系统 CPU 利用率(内部保存上次 GetSystemTimes 快照,
+// 返回与上次的差分;首次调用返回 -1 表示尚无基线)。
+func CPULoadPercent() int {
+	var idle, kernel, user uint64
+	r, _, _ := procGetSysTimes.Call(
+		uintptr(unsafe.Pointer(&idle)),
+		uintptr(unsafe.Pointer(&kernel)),
+		uintptr(unsafe.Pointer(&user)))
+	if r == 0 {
+		return -1
+	}
+	if !cpuTimesStarted {
+		cpuTimesLast = [3]uint64{idle, kernel, user}
+		cpuTimesStarted = true
+		return -1
+	}
+	idleDiff := int64(idle) - int64(cpuTimesLast[0])
+	totalDiff := (int64(kernel) - int64(cpuTimesLast[1])) + (int64(user) - int64(cpuTimesLast[2]))
+	cpuTimesLast = [3]uint64{idle, kernel, user}
+	if totalDiff <= 0 {
+		// 采样间隔过短(两次调用之间计数器未推进)时不要返回 -1:
+		// 上层会把 -1 当作无效值,界面利用率掉回 0%(实测 0ms 间隔必现)。
+		// 此时保留上次结果;尚无结果则报 0%。
+		if cpuLastPct >= 0 {
+			return cpuLastPct
+		}
+		return 0
+	}
+	pct := 100 - int(idleDiff*100/totalDiff)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	cpuLastPct = pct
+	return pct
+}
+
+// CPUFrequencyMHz 返回各逻辑核当前频率的平均值(CallNtPowerInformation/ProcessorInformation)。
+// 失败返回 -1。
+func CPUFrequencyMHz() int {
+	buf := make([]processorPowerInfo, 64) // 32 线程 × 余量;不足会 STATUS_BUFFER_TOO_SMALL
+	r, _, _ := procCallNtPower.Call(
+		11, // ProcessorInformation
+		0, 0,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Sizeof(buf[0]))*uintptr(len(buf)))
+	if r != 0 {
+		return -1
+	}
+	sum, cnt := 0, 0
+	for _, p := range buf {
+		if p.CurrentMhz == 0 {
+			break
+		}
+		sum += int(p.CurrentMhz)
+		cnt++
+	}
+	if cnt == 0 {
+		return -1
+	}
+	return sum / cnt
+}

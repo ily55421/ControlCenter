@@ -75,6 +75,11 @@ func (g *GUI) pageKB(gtx C) D {
 	// 改为纵向全宽面板,确定性收敛。
 	return col(gtx,
 		func(gtx C) D {
+			return pageHead(gtx, "LED 设备", "分区取色 / 灯效 / 亮度与键盘睡眠计时器", func(gtx C) D {
+				return pillBadge(gtx, kbTypeName(int(s.Type)), colAccent)
+			})
+		},
+		func(gtx C) D {
 			return col(gtx,
 				func(gtx C) D {
 					return panel(gtx, "键盘睡眠计时器", func(gtx C) D {
@@ -259,6 +264,11 @@ func (g *GUI) pageFlexikey(gtx C) D {
 	}
 	return col(gtx,
 		func(gtx C) D {
+			return pageHead(gtx, "FlexiKey", "键盘宏配置档与鼠标宏统计", func(gtx C) D {
+				return pillBadge(gtx, "profile.xml", colWarn)
+			})
+		},
+		func(gtx C) D {
 			return centerRow(gtx,
 				func(gtx C) D { return drawTab(gtx, &g.w.fkMainTab, "键盘宏", true, false, true) },
 				func(gtx C) D { return drawTab(gtx, &g.w.fkStatTab, "统计", false, false, true) },
@@ -361,74 +371,82 @@ func (g *GUI) pageCharger(gtx C) D {
 	modeLabel := [3]string{"最大电池电量", "推荐电池充电", "自定义电池充电"}
 	modeDesc := [3]string{"持续将电池充电至 100%", "低于 70% 充电,80% 停止", "设置启动和停止充电阈值"}
 
-	return grid2(gtx, 5, 4,
+	return col(gtx,
 		func(gtx C) D {
-			return panel(gtx, "电池充电选项", func(gtx C) D {
-				rows := make([]layout.Widget, 0, 7)
-				for i := 0; i < 3; i++ {
-					i := i
-					rows = append(rows, func(gtx C) D {
-						return g.fcRadioRow(gtx, &g.w.fcMode[i], i == fc.Mode, modeLabel[i], modeDesc[i])
-					}, vSpacer(6))
-				}
-				rows = append(rows,
-					vSpacer(14),
-					func(gtx C) D {
-						return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								return col(gtx,
-									func(gtx C) D { return label(gtx, "容量不足时开始充电", 12, pal.Dim) },
-									func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStart.value()), 34, pal.Lime) },
-									func(gtx C) D {
-										gtx.Constraints.Min.X = gtx.Dp(180)
-										return g.w.fcStart.layout(gtx)
-									})
-							}),
-							layout.Rigid(func(gtx C) D {
-								return col(gtx,
-									func(gtx C) D { return label(gtx, "容量达到时停止充电", 12, pal.Dim) },
-									func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStop.value()), 34, pal.Lime) },
-									func(gtx C) D {
-										gtx.Constraints.Min.X = gtx.Dp(180)
-										return g.w.fcStop.layout(gtx)
-									})
-							}))
-					},
-					vSpacer(10),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.fcApply, "应用", btnPri, false) },
-							hSpacer(12),
-							func(gtx C) D {
-								return label(gtx, "下发:WMI4 sub31 · 记住选择,开机自动回写 EC", 12, pal.Dim)
-							})
-					})
-				return col(gtx, rows...)
+			return pageHead(gtx, "FlexiCharger", "充电模式与起停阈值", func(gtx C) D {
+				return pillBadge(gtx, modeLabel[clampI(fc.Mode, 0, 2)], colOk)
 			})
 		},
 		func(gtx C) D {
-			return panel(gtx, "电池状态", func(gtx C) D {
-				hasBat := s.Bat.Design > 0
-				return col(gtx,
-					func(gtx C) D {
-						txt := "— 本机无电池管理支持位 —"
-						if hasBat {
-							txt = "已插入电源"
+			return grid2(gtx, 5, 4,
+				func(gtx C) D {
+					return panel(gtx, "电池充电选项", func(gtx C) D {
+						rows := make([]layout.Widget, 0, 7)
+						for i := 0; i < 3; i++ {
+							i := i
+							rows = append(rows, func(gtx C) D {
+								return g.fcRadioRow(gtx, &g.w.fcMode[i], i == fc.Mode, modeLabel[i], modeDesc[i])
+							}, vSpacer(6))
 						}
-						td, call := textDims(gtx, txt, 13, pal.Lime)
-						replayText(gtx, call, (gtx.Constraints.Max.X-td.Size.X)/2, 0)
-						return D{Size: image.Pt(gtx.Constraints.Max.X, td.Size.Y)}
-					},
-					vSpacer(8),
-					func(gtx C) D {
-						return layout.Center.Layout(gtx, func(gtx C) D { return batteryOutline(gtx, s.Bat.CapacityPct, hasBat) })
-					},
-					vSpacer(14),
-					func(gtx C) D {
-						return dialSized(gtx, 220, 200, g.chDial.tick(float32(fc.Stop-40)), 60, dialOpt{
-							ticks: 30, color: pal.Lime, labels: []string{"40", "60", "80", "100"}, center: fmt.Sprintf("%d%%", fc.Stop)})
-					},
-					func(gtx C) D { return centerLabel(gtx, fmt.Sprintf("阈值区间 %d%% → %d%%", fc.Start, fc.Stop)) })
-			})
+						rows = append(rows,
+							vSpacer(14),
+							func(gtx C) D {
+								return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
+									layout.Rigid(func(gtx C) D {
+										return col(gtx,
+											func(gtx C) D { return label(gtx, "容量不足时开始充电", 12, pal.Dim) },
+											func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStart.value()), 34, pal.Lime) },
+											func(gtx C) D {
+												gtx.Constraints.Min.X = gtx.Dp(180)
+												return g.w.fcStart.layout(gtx)
+											})
+									}),
+									layout.Rigid(func(gtx C) D {
+										return col(gtx,
+											func(gtx C) D { return label(gtx, "容量达到时停止充电", 12, pal.Dim) },
+											func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStop.value()), 34, pal.Lime) },
+											func(gtx C) D {
+												gtx.Constraints.Min.X = gtx.Dp(180)
+												return g.w.fcStop.layout(gtx)
+											})
+									}))
+							},
+							vSpacer(10),
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.fcApply, "应用", btnPri, false) },
+									hSpacer(12),
+									func(gtx C) D {
+										return label(gtx, "下发:WMI4 sub31 · 记住选择,开机自动回写 EC", 12, pal.Dim)
+									})
+							})
+						return col(gtx, rows...)
+					})
+				},
+				func(gtx C) D {
+					return panel(gtx, "电池状态", func(gtx C) D {
+						hasBat := s.Bat.Design > 0
+						return col(gtx,
+							func(gtx C) D {
+								txt := "— 本机无电池管理支持位 —"
+								if hasBat {
+									txt = "已插入电源"
+								}
+								td, call := textDims(gtx, txt, 13, pal.Lime)
+								replayText(gtx, call, (gtx.Constraints.Max.X-td.Size.X)/2, 0)
+								return D{Size: image.Pt(gtx.Constraints.Max.X, td.Size.Y)}
+							},
+							vSpacer(8),
+							func(gtx C) D {
+								return layout.Center.Layout(gtx, func(gtx C) D { return batteryOutline(gtx, s.Bat.CapacityPct, hasBat) })
+							},
+							vSpacer(14),
+							func(gtx C) D {
+								return dialSized(gtx, 220, 200, g.chDial.tick(float32(fc.Stop-40)), 60, dialOpt{
+									ticks: 30, color: pal.Lime, labels: []string{"40", "60", "80", "100"}, center: fmt.Sprintf("%d%%", fc.Stop)})
+							},
+							func(gtx C) D { return centerLabel(gtx, fmt.Sprintf("阈值区间 %d%% → %d%%", fc.Start, fc.Stop)) })
+					})
+				})
 		})
 }
 

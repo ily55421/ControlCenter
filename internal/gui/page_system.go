@@ -41,12 +41,7 @@ func (g *GUI) pageSystem(gtx C) D {
 			g.after(900*time.Millisecond, pgSystem)
 		}
 	}
-	for j := 0; j < 5; j++ {
-		if g.w.fanTab[j].Clicked(gtx) {
-			m := fanTabModes[j]
-			g.run("风扇模式:"+fanModes[m], pgSystem, 400*time.Millisecond, func() error { g.be.SetFanMode(m); return nil })
-		}
-	}
+	// 风扇模式改由分段控件在布局期回传下标(见 fanTabPicked)
 	if g.w.noiseless.Update(gtx) {
 		v := g.w.noiseless.Value
 		g.run("已下发", pgSystem, 400*time.Millisecond, func() error { g.be.SetModeOption("noiseless", v); return nil })
@@ -104,15 +99,39 @@ func (g *GUI) pageSystem(gtx C) D {
 	g.w.blSlider.syncExt(s.opts.BlueLight)
 
 	// ----- 布局 -----
+	// 页头(标题层级) → 模式标签 → 双列内容 → 页脚信息条(收口,消灭底部死黑)
 	return col(gtx,
+		func(gtx C) D {
+			return pageHead(gtx, "系统监控", "实时利用率 / 温度 / 风扇转速与模式切换", func(gtx C) D {
+				return pillBadge(gtx, modeNames[s.st.Mode], colAccent)
+			})
+		},
 		func(gtx C) D { return g.modeTabsRow(gtx, s) },
-		vSpacer(10),
+		vSpacer(14),
 		func(gtx C) D {
 			return grid2(gtx, 5, 4,
 				func(gtx C) D { return g.systemLeft(gtx, s, live) },
 				func(gtx C) D { return g.systemRight(gtx, s, live) })
 		},
+		func(gtx C) D {
+			right := ""
+			if live != nil {
+				right = fmt.Sprintf("%d MHz · %d%% · %d℃ · 风扇偏移 %d%%",
+					live.FreqMHz, live.Util, live.Temp, s.fanCfg.Offset)
+			}
+			return pageFooter(gtx, fmt.Sprintf("%s %s · %s", orDash(s.st.Manufacturer),
+				s.st.Product, modeNames[s.st.Mode]), right)
+		},
 	)
+}
+
+// fanTabPicked 分段控件选中风扇模式后下发(下标对应 fanTabModes)。
+func (g *GUI) fanTabPicked(j int) {
+	if j < 0 || j >= len(fanTabModes) {
+		return
+	}
+	m := fanTabModes[j]
+	g.run("风扇模式:"+fanModes[m], pgSystem, 400*time.Millisecond, func() error { g.be.SetFanMode(m); return nil })
 }
 
 func (g *GUI) modeTabsRow(gtx C, s *sysSnap) D {
@@ -131,8 +150,16 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 	util, mhz, temp := float32(0), 0, 0
 	fanTemps := [3]int{} // CPU/GPU1/GPU2 当前温度(曲线叠加工作点)
 	if live != nil {
-		util = float32(live.Ci.CPUUtil)
-		mhz, temp = live.Ci.CPUMHz, live.Ci.CPUTemp
+		// 实时数据自采样:page6 实时区依赖 BIOS/XTU 通道(无 XTU 服务的机器恒零),
+		// 利用率=GetSystemTimes 差分、频率=powrprof、温度=EC 风扇包,全部自持。
+		util = float32(live.Util)
+		mhz, temp = live.FreqMHz, live.Temp
+		if mhz < 0 {
+			mhz = 0
+		}
+		if temp <= 0 {
+			temp = live.Live.CPU.Temp
+		}
 		fanTemps = [3]int{live.Live.CPU.Temp, live.Live.GPU1.Temp, live.Live.GPU2.Temp}
 	}
 	// 动画值:表盘与大数字共用,数字随动画平滑滚动(1s 采样也不显跳变)
@@ -163,23 +190,43 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 			)
 		},
 		vSpacer(18),
-		// 风扇模式标签 + 寂静开关
+		// 风扇模式(等分分段控件,单行更整齐) + 寂静模式开关
 		func(gtx C) D {
-			var tabs []layout.Widget
+			labels := make([]string, 0, 5)
+			cur := 0
 			for j := 0; j < 5; j++ {
-				j := j
-				tabs = append(tabs, func(gtx C) D {
-					return drawTab(gtx, &g.w.fanTab[j], fanModes[fanTabModes[j]], s.fanCfg.Mode == fanTabModes[j], true, false)
-				})
+				labels = append(labels, fanModes[fanTabModes[j]])
+				if s.fanCfg.Mode == fanTabModes[j] {
+					cur = j
+				}
 			}
-			tabs = append(tabs, hSpacer(14), func(gtx C) D {
-				return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.noiseless) },
-					func(gtx C) D { return label(gtx, "寂靜模式", 13, pal.Dim) })
-			})
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx, flexWrap(tabs...)...)
+			g.w.fanSeg.sel = cur // 以快照为准(控件只负责展示与点击)
+			var d D
+			var picked int
+			layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx C) D {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					d, picked = g.w.fanSeg.Layout(gtx, labels)
+					// 段内点击与旧的 fanTab 语义一致:立刻下发风扇模式
+					if picked >= 0 {
+						g.fanTabPicked(picked)
+					}
+					return d
+				}),
+				layout.Rigid(func(gtx C) D { return hSpacer(sp16)(gtx) }),
+				layout.Rigid(func(gtx C) D { return switchBox(gtx, &g.w.noiseless) }),
+				layout.Rigid(func(gtx C) D {
+					return layout.Inset{Left: unit.Dp(sp8)}.Layout(gtx, func(gtx C) D {
+						return txt(gtx, "寂靜模式", textStyle{Size: fsBody2, Col: colText3})
+					})
+				}),
+			)
+			return D{Size: image.Pt(gtx.Constraints.Max.X, d.Size.Y)}
 		},
 		vSpacer(4),
-		func(gtx C) D { return centerLabel(gtx, fmt.Sprintf("风扇转速控制 · WMI 121/1 + 偏移 %d%%", s.fanCfg.Offset)) },
+		func(gtx C) D {
+			return centerLabel(gtx, fmt.Sprintf("风扇转速控制 · WMI 121/1 + 偏移 %d%%", s.fanCfg.Offset))
+		},
 		vSpacer(8),
 		// 风扇控制面板
 		func(gtx C) D {
@@ -363,7 +410,10 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 	if live != nil {
 		kbDuty, kbRpm, kbTemp = live.Live.CPU.Duty, live.Live.CPU.RPM, live.Live.CPU.Temp
 		gDuty, gRpm, gTemp = live.Live.GPU1.Duty, live.Live.GPU1.RPM, live.Live.GPU1.Temp
-		cpuMHz = live.Ci.CPUMHz
+		cpuMHz = live.FreqMHz
+		if cpuMHz < 0 {
+			cpuMHz = 0
+		}
 	}
 	gpuDead := gDuty == 0 && gRpm == 0 && gTemp == 0 // dGPU 断电(安静/安静增强)时 EC 全零
 

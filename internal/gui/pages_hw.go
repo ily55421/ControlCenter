@@ -79,6 +79,11 @@ func (g *GUI) pageCPU(gtx C) D {
 
 	return col(gtx,
 		func(gtx C) D {
+			return pageHead(gtx, "CPU 超频", "XTU 通道的功耗/电压与 P/E 核倍频", func(gtx C) D {
+				return pillBadge(gtx, fmt.Sprintf("PL1 %dW", g.w.cpuPL1.value()), colAccent)
+			})
+		},
+		func(gtx C) D {
 			return grid2(gtx, 1, 1,
 				func(gtx C) D {
 					return panel(gtx, "实时状态", func(gtx C) D {
@@ -215,20 +220,28 @@ func (g *GUI) pageGPU(gtx C) D {
 				return label(gtx, "写入 AppSettings page5(非对称 int16)→ ControlGPU.exe set_increment", 12, pal.Dim)
 			})
 	}
-	return grid2(gtx, 1, 1,
+	return col(gtx,
 		func(gtx C) D {
-			return panel(gtx, "GPU 资讯", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D { return kvRow(gtx, "GPU 数量", strconv.Itoa(gi.Count)) },
-					func(gtx C) D { return kvRow(gtx, "基础频率", fmt.Sprintf("%d MHz", gi.BaseClock)) },
-					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },
-					func(gtx C) D { return kvRow(gtx, "驱动", orDash(gi.Driver)) },
-					func(gtx C) D {
-						return kvRow(gtx, "当前生效", fmt.Sprintf("核心 %d / 显存 %d MHz", gi.Current.Core, gi.Current.Mem))
-					})
+			return pageHead(gtx, "GPU 超频", "核心 / 显存偏移写入 AppSettings page5", func(gtx C) D {
+				return pillBadge(gtx, fmt.Sprintf("%d GPU", gi.Count), colViolet)
 			})
 		},
-		func(gtx C) D { return panel(gtx, "超频偏移 (MHz)", offsetPanel) })
+		func(gtx C) D {
+			return grid2(gtx, 1, 1,
+				func(gtx C) D {
+					return panel(gtx, "GPU 资讯", func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D { return kvRow(gtx, "GPU 数量", strconv.Itoa(gi.Count)) },
+							func(gtx C) D { return kvRow(gtx, "基础频率", fmt.Sprintf("%d MHz", gi.BaseClock)) },
+							func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },
+							func(gtx C) D { return kvRow(gtx, "驱动", orDash(gi.Driver)) },
+							func(gtx C) D {
+								return kvRow(gtx, "当前生效", fmt.Sprintf("核心 %d / 显存 %d MHz", gi.Current.Core, gi.Current.Mem))
+							})
+					})
+				},
+				func(gtx C) D { return panel(gtx, "超频偏移 (MHz)", offsetPanel) })
+		})
 }
 
 // ---------- 电池 ----------
@@ -255,40 +268,48 @@ func (g *GUI) pageBat(gtx C) D {
 	} else if s.HealthCode == 1 {
 		kind = "warn"
 	}
-	return grid2(gtx, 1, 1,
+	return col(gtx,
 		func(gtx C) D {
-			return panel(gtx, "电池信息", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D { return kvRow(gtx, "循环次数", strconv.Itoa(s.CycleCount)) },
-					func(gtx C) D { return kvRow(gtx, "满充容量", fmt.Sprintf("%d mAh", s.FullCharge)) },
-					func(gtx C) D { return kvRow(gtx, "设计容量", fmt.Sprintf("%d mAh", s.Design)) },
-					func(gtx C) D { return kvRow(gtx, "容量保持", fmt.Sprintf("%d%%", s.CapacityPct)) },
-					func(gtx C) D { return kvRow(gtx, "使用年限", fmt.Sprintf("%.1f 年", s.AgeYears)) },
-					func(gtx C) D { return kvRow(gtx, "停充阈值", fmt.Sprintf("%d%%", s.StopThresh)) },
-					vSpacer(12),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, "健康判定:", 13, pal.Dim) },
-							hSpacer(10), func(gtx C) D { return badge(gtx, hcTxt, kind) })
-					})
+			return pageHead(gtx, "电池", "健康度 / 校准状态与充放电控制", func(gtx C) D {
+				return pillBadge(gtx, hcTxt, healthCol(kind))
 			})
 		},
 		func(gtx C) D {
-			return panel(gtx, "电池校准", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D {
-						return label(gtx, "校准将强制断开适配器放电(WMI 121/28),请接入电源后开始;整个过程可能耗时数小时。", 12, pal.Dim)
-					},
-					vSpacer(14),
-					func(gtx C) D {
-						if s.Ongoing == 0 {
-							return row(gtx, func(gtx C) D { return g.w.batStartB.layout(gtx, "开始校准") })
-						}
-						return row(gtx,
-							func(gtx C) D { return badge(gtx, fmt.Sprintf("校准进行中(阶段 %d)", s.Ongoing), "warn") },
-							hSpacer(12),
-							func(gtx C) D { return actBtn(gtx, &g.w.batStopB, "停止", btnPlain, false) })
+			return grid2(gtx, 1, 1,
+				func(gtx C) D {
+					return panel(gtx, "电池信息", func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D { return kvRow(gtx, "循环次数", strconv.Itoa(s.CycleCount)) },
+							func(gtx C) D { return kvRow(gtx, "满充容量", fmt.Sprintf("%d mAh", s.FullCharge)) },
+							func(gtx C) D { return kvRow(gtx, "设计容量", fmt.Sprintf("%d mAh", s.Design)) },
+							func(gtx C) D { return kvRow(gtx, "容量保持", fmt.Sprintf("%d%%", s.CapacityPct)) },
+							func(gtx C) D { return kvRow(gtx, "使用年限", fmt.Sprintf("%.1f 年", s.AgeYears)) },
+							func(gtx C) D { return kvRow(gtx, "停充阈值", fmt.Sprintf("%d%%", s.StopThresh)) },
+							vSpacer(12),
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return label(gtx, "健康判定:", 13, pal.Dim) },
+									hSpacer(10), func(gtx C) D { return badge(gtx, hcTxt, kind) })
+							})
 					})
-			})
+				},
+				func(gtx C) D {
+					return panel(gtx, "电池校准", func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D {
+								return label(gtx, "校准将强制断开适配器放电(WMI 121/28),请接入电源后开始;整个过程可能耗时数小时。", 12, pal.Dim)
+							},
+							vSpacer(14),
+							func(gtx C) D {
+								if s.Ongoing == 0 {
+									return row(gtx, func(gtx C) D { return g.w.batStartB.layout(gtx, "开始校准") })
+								}
+								return row(gtx,
+									func(gtx C) D { return badge(gtx, fmt.Sprintf("校准进行中(阶段 %d)", s.Ongoing), "warn") },
+									hSpacer(12),
+									func(gtx C) D { return actBtn(gtx, &g.w.batStopB, "停止", btnPlain, false) })
+							})
+					})
+				})
 		})
 }
 
@@ -331,72 +352,80 @@ func (g *GUI) pageEnergy(gtx C) D {
 	if len(hist) > 0 {
 		nowTxt = fmt.Sprintf("%.1f W", hist[len(hist)-1])
 	}
-	return grid2(gtx, 1, 1,
+	return col(gtx,
 		func(gtx C) D {
-			return panel(gtx, "实时功耗", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D { return drawWattChart(gtx, hist) },
-					vSpacer(8),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, nowTxt, 32, pal.Txt) },
-							hSpacer(14),
-							func(gtx C) D {
-								return label(gtx, fmt.Sprintf("电池 %.1f Wh · 适配器/PD %.0f W", meta.BatWh, meta.PD), 13, pal.Dim)
-							})
-					})
+			return pageHead(gtx, "电池", "实时功耗曲线与充放电阈值/调度", func(gtx C) D {
+				return pillBadge(gtx, nowTxt, colOk)
 			})
 		},
 		func(gtx C) D {
-			return panel(gtx, "充放电阈值 / 调度", func(gtx C) D {
-				return col(gtx,
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, "充电上限 %", 13, pal.Dim) },
-							hSpacer(6), func(gtx C) D {
-								return g.w.ecCL.layout(gtx)
-							},
-							hSpacer(14),
-							func(gtx C) D { return label(gtx, "放电下限 %", 13, pal.Dim) },
-							hSpacer(6), func(gtx C) D { return g.w.ecDL.layout(gtx) })
-					},
-					vSpacer(10),
-					func(gtx C) D {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
-					},
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es1on) },
-							hSpacer(8),
-							func(gtx C) D { return numBox(gtx, &g.w.es1s, 64) },
-							func(gtx C) D { return label(gtx, "时起", 13, pal.Dim) },
-							func(gtx C) D { return numBox(gtx, &g.w.es1e, 64) },
-							func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
-					},
-					vSpacer(6),
-					func(gtx C) D {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
-					},
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es2on) },
-							hSpacer(8),
-							func(gtx C) D { return numBox(gtx, &g.w.es2s, 64) },
-							func(gtx C) D { return label(gtx, "时起", 13, pal.Dim) },
-							func(gtx C) D { return numBox(gtx, &g.w.es2e, 64) },
-							func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
-					},
-					vSpacer(8),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return label(gtx, "重复", 13, pal.Dim) },
-							hSpacer(8), func(gtx C) D { return g.w.esEv.layout(gtx) })
-					},
-					vSpacer(10),
-					func(gtx C) D {
-						return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.enApply, "应用节能计划", btnPri, false) },
-							hSpacer(12), func(gtx C) D { return actBtn(gtx, &g.w.enDisable, "停用", btnPlain, false) })
-					},
-					vSpacer(4),
-					func(gtx C) D {
-						return label(gtx, "下发:WMI 118(时间同步 → 生效日 → 调度×2 → 使能 → 阈值)", 12, pal.Dim)
+			return grid2(gtx, 1, 1,
+				func(gtx C) D {
+					return panel(gtx, "实时功耗", func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D { return drawWattChart(gtx, hist) },
+							vSpacer(8),
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return label(gtx, nowTxt, 32, pal.Txt) },
+									hSpacer(14),
+									func(gtx C) D {
+										return label(gtx, fmt.Sprintf("电池 %.1f Wh · 适配器/PD %.0f W", meta.BatWh, meta.PD), 13, pal.Dim)
+									})
+							})
 					})
-			})
+				},
+				func(gtx C) D {
+					return panel(gtx, "充放电阈值 / 调度", func(gtx C) D {
+						return col(gtx,
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return label(gtx, "充电上限 %", 13, pal.Dim) },
+									hSpacer(6), func(gtx C) D {
+										return g.w.ecCL.layout(gtx)
+									},
+									hSpacer(14),
+									func(gtx C) D { return label(gtx, "放电下限 %", 13, pal.Dim) },
+									hSpacer(6), func(gtx C) D { return g.w.ecDL.layout(gtx) })
+							},
+							vSpacer(10),
+							func(gtx C) D {
+								return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度一", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
+							},
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es1on) },
+									hSpacer(8),
+									func(gtx C) D { return numBox(gtx, &g.w.es1s, 64) },
+									func(gtx C) D { return label(gtx, "时起", 13, pal.Dim) },
+									func(gtx C) D { return numBox(gtx, &g.w.es1e, 64) },
+									func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
+							},
+							vSpacer(6),
+							func(gtx C) D {
+								return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx C) D { return label(gtx, "调度二", 13, pal.Txt) }), layout.Rigid(vSpacer(2)))
+							},
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return switchBox(gtx, &g.w.es2on) },
+									hSpacer(8),
+									func(gtx C) D { return numBox(gtx, &g.w.es2s, 64) },
+									func(gtx C) D { return label(gtx, "时起", 13, pal.Dim) },
+									func(gtx C) D { return numBox(gtx, &g.w.es2e, 64) },
+									func(gtx C) D { return label(gtx, "时止", 13, pal.Dim) })
+							},
+							vSpacer(8),
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return label(gtx, "重复", 13, pal.Dim) },
+									hSpacer(8), func(gtx C) D { return g.w.esEv.layout(gtx) })
+							},
+							vSpacer(10),
+							func(gtx C) D {
+								return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.enApply, "应用节能计划", btnPri, false) },
+									hSpacer(12), func(gtx C) D { return actBtn(gtx, &g.w.enDisable, "停用", btnPlain, false) })
+							},
+							vSpacer(4),
+							func(gtx C) D {
+								return label(gtx, "下发:WMI 118(时间同步 → 生效日 → 调度×2 → 使能 → 阈值)", 12, pal.Dim)
+							})
+					})
+				})
 		})
 }
 
@@ -463,67 +492,75 @@ func (g *GUI) pagePref(gtx C) D {
 		g.run("语言已切换", pgPref, actDur, func() error { g.be.SetLanguage(v); return nil })
 	}
 
-	return grid2(gtx, 1, 1,
+	return col(gtx,
 		func(gtx C) D {
-			return col(gtx,
-				func(gtx C) D {
-					return panel(gtx, "键盘 Fn 键行为", func(gtx C) D {
-						return col(gtx,
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "FnLock", 13, pal.Dim) },
-									hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfFnLock) },
-									hSpacer(14), func(gtx C) D { return label(gtx, "Win 键启用", 13, pal.Dim) },
-									hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfWin) },
-									hSpacer(14), func(gtx C) D { return label(gtx, "Win+Fn 切换", 13, pal.Dim) },
-									hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfFnWin) })
-							},
-							vSpacer(10),
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.pfKbApply, "应用", btnPri, false) },
-									hSpacer(12), func(gtx C) D { return label(gtx, "WMI4 sub25(1=on,2=off)", 12, pal.Dim) })
-							})
-					})
-				},
-				func(gtx C) D {
-					return panel(gtx, "显示", func(gtx C) D {
-						return col(gtx,
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "蓝光过滤", 13, pal.Dim) },
-									hSpacer(8), func(gtx C) D { return label(gtx, fmt.Sprintf("%d/10", g.w.pfBL.value()), 14, pal.Lime) })
-							},
-							func(gtx C) D { return g.w.pfBL.layout(gtx) },
-							vSpacer(8),
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "PgUp/PgDn 启用", 13, pal.Dim) },
-									hSpacer(8), func(gtx C) D { return switchBox(gtx, &g.w.pfPg) },
-									hSpacer(14), func(gtx C) D { return actBtn(gtx, &g.w.pfDispApply, "应用", btnPri, false) })
-							})
-					})
-				})
+			return pageHead(gtx, "偏好", "键盘 Fn 行为 / 显示 / GPU 模式 / 界面语言", func(gtx C) D {
+				return pillBadge(gtx, "AppSettings", colText3)
+			})
 		},
 		func(gtx C) D {
-			return col(gtx,
+			return grid2(gtx, 1, 1,
 				func(gtx C) D {
-					return panel(gtx, "GPU 模式切换(需重启)", func(gtx C) D {
-						return col(gtx,
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return g.w.pfGPU.layout(gtx) },
-									hSpacer(14), func(gtx C) D { return g.w.pfGPUApply.layout(gtx, "应用并重启") })
-							},
-							vSpacer(6),
-							func(gtx C) D { return label(gtx, "WMI4 sub22 → shutdown -f -r -t 0", 12, pal.Dim) })
-					})
+					return col(gtx,
+						func(gtx C) D {
+							return panel(gtx, "键盘 Fn 键行为", func(gtx C) D {
+								return col(gtx,
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return label(gtx, "FnLock", 13, pal.Dim) },
+											hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfFnLock) },
+											hSpacer(14), func(gtx C) D { return label(gtx, "Win 键启用", 13, pal.Dim) },
+											hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfWin) },
+											hSpacer(14), func(gtx C) D { return label(gtx, "Win+Fn 切换", 13, pal.Dim) },
+											hSpacer(6), func(gtx C) D { return switchBox(gtx, &g.w.pfFnWin) })
+									},
+									vSpacer(10),
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.pfKbApply, "应用", btnPri, false) },
+											hSpacer(12), func(gtx C) D { return label(gtx, "WMI4 sub25(1=on,2=off)", 12, pal.Dim) })
+									})
+							})
+						},
+						func(gtx C) D {
+							return panel(gtx, "显示", func(gtx C) D {
+								return col(gtx,
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return label(gtx, "蓝光过滤", 13, pal.Dim) },
+											hSpacer(8), func(gtx C) D { return label(gtx, fmt.Sprintf("%d/10", g.w.pfBL.value()), 14, pal.Lime) })
+									},
+									func(gtx C) D { return g.w.pfBL.layout(gtx) },
+									vSpacer(8),
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return label(gtx, "PgUp/PgDn 启用", 13, pal.Dim) },
+											hSpacer(8), func(gtx C) D { return switchBox(gtx, &g.w.pfPg) },
+											hSpacer(14), func(gtx C) D { return actBtn(gtx, &g.w.pfDispApply, "应用", btnPri, false) })
+									})
+							})
+						})
 				},
 				func(gtx C) D {
-					return panel(gtx, "界面语言", func(gtx C) D {
-						return col(gtx,
-							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return g.w.pfLang.layout(gtx) },
-									hSpacer(14), func(gtx C) D { return actBtn(gtx, &g.w.pfLangApply, "应用", btnPri, false) })
-							},
-							vSpacer(6),
-							func(gtx C) D { return label(gtx, "写入 AppSettings(1,2) 并广播 clevofnkey^102", 12, pal.Dim) })
-					})
+					return col(gtx,
+						func(gtx C) D {
+							return panel(gtx, "GPU 模式切换(需重启)", func(gtx C) D {
+								return col(gtx,
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return g.w.pfGPU.layout(gtx) },
+											hSpacer(14), func(gtx C) D { return g.w.pfGPUApply.layout(gtx, "应用并重启") })
+									},
+									vSpacer(6),
+									func(gtx C) D { return label(gtx, "WMI4 sub22 → shutdown -f -r -t 0", 12, pal.Dim) })
+							})
+						},
+						func(gtx C) D {
+							return panel(gtx, "界面语言", func(gtx C) D {
+								return col(gtx,
+									func(gtx C) D {
+										return row(gtx, func(gtx C) D { return g.w.pfLang.layout(gtx) },
+											hSpacer(14), func(gtx C) D { return actBtn(gtx, &g.w.pfLangApply, "应用", btnPri, false) })
+									},
+									vSpacer(6),
+									func(gtx C) D { return label(gtx, "写入 AppSettings(1,2) 并广播 clevofnkey^102", 12, pal.Dim) })
+							})
+						})
 				})
 		})
 }

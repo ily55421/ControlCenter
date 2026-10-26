@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,8 +29,38 @@ import (
 // instanceName 单实例互斥量名;默认与正式版一致,冒烟测试用 ldflags 覆盖。
 var instanceName = "ccapp"
 
-func main() {
+// initLogging GUI 子系统下没有可用的标准输出句柄:
+// 默认丢弃日志;CC_LOG=1 时追加写入 %LOCALAPPDATA%\ControlCenter\ccapp.log 便于排查。
+func initLogging() {
 	log.SetFlags(log.Ltime)
+	if os.Getenv("CC_LOG") != "1" {
+		log.SetOutput(discard{})
+		return
+	}
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "ControlCenter")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.SetOutput(discard{})
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "ccapp.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.SetOutput(discard{})
+		return
+	}
+	log.SetOutput(f)
+}
+
+// discard 吞掉全部日志写入(无控制台时的默认去向)。
+type discard struct{}
+
+func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func main() {
+	// GUI 子系统程序没有控制台(stdout/stderr 句柄为无效值):
+	// 显式丢弃日志输出,避免 log 包写标准错误失败刷屏;
+	// 需要排查时设置 CC_LOG=1 可把日志追加写入 %LOCALAPPDATA%\ControlCenter\ccapp.log。
+	initLogging()
 
 	// 深链页参数(-page=fan 等,兼容面板启动器/托盘/旧版协议页名)
 	page := ""
@@ -44,7 +73,7 @@ func main() {
 	// 单实例:已有实例则导航到目标页并前置其窗口(而不是静默退出)
 	// instanceName 可经 -ldflags "-X main.instanceName=..." 覆盖(冒烟测试用独立名字)。
 	if dup, err := win32.SingleInstanceGuard(instanceName); err == nil && dup {
-		fmt.Println("Control Center 已在运行,激活窗口")
+		log.Println("Control Center 已在运行,激活窗口")
 		if !win32.NavNotify(page) {
 			// 旧版实例没有导航窗口:仅前置
 			win32.FocusWindow(launcher.MainWindowTitle)
@@ -127,7 +156,7 @@ func main() {
 		}
 	}()
 
-	fmt.Println("Control Center (Go) 原生 GUI 已启动")
+	log.Println("Control Center (Go) 原生 GUI 已启动")
 
 	// Gio 要求平台主循环占用 main goroutine;GUI 事件循环放独立 goroutine,
 	// Run 返回(窗口关闭/托盘关闭命令)即清理退出。
