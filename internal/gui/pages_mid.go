@@ -26,7 +26,9 @@ const actDur = 400 * time.Millisecond
 func (g *GUI) pageKB(gtx C) D {
 	s := g.kb.Load()
 	if s == nil {
-		return panel(gtx, "正在加载", func(gtx C) D { return label(gtx, "正在读取键盘灯状态…", 14, pal.Dim) })
+		return panel(gtx, "正在加载", func(gtx C) D {
+			return txt(gtx, "正在读取键盘灯状态…", textStyle{Size: fsBig, Col: colText3})
+		})
 	}
 	if g.w.kbOn.Update(gtx) {
 		m := 0
@@ -73,7 +75,7 @@ func (g *GUI) pageKB(gtx C) D {
 
 	// 单列布局:双栏在特定窗口尺寸下触发 panel 宏内容跨栏/双绘(kbLayout/色环),
 	// 改为纵向全宽面板,确定性收敛。
-	return col(gtx,
+	return spreadCol(gtx,
 		func(gtx C) D {
 			return pageHead(gtx, "LED 设备", "分区取色 / 灯效 / 亮度与键盘睡眠计时器", func(gtx C) D {
 				return pillBadge(gtx, kbTypeName(int(s.Type)), colAccent)
@@ -85,7 +87,7 @@ func (g *GUI) pageKB(gtx C) D {
 					return panel(gtx, "键盘睡眠计时器", func(gtx C) D {
 						return col(gtx,
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "状态", 13, pal.Dim) },
+								return row(gtx, func(gtx C) D { return txt(gtx, "状态", textStyle{Size: fsBody, Col: colText3}) },
 									hSpacer(12),
 									func(gtx C) D { return actBtn(gtx, &g.w.kbSleepOff, "禁用", btnPlain, s.SleepTrigger) },
 									hSpacer(10),
@@ -93,40 +95,55 @@ func (g *GUI) pageKB(gtx C) D {
 							},
 							vSpacer(8),
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "时 / 分 / 秒", 13, pal.Dim) },
+								return row(gtx, func(gtx C) D { return txt(gtx, "时 / 分 / 秒", textStyle{Size: fsBody, Col: colText3}) },
 									hSpacer(8),
 									func(gtx C) D { g.w.slH.sync(gtx, 0); return numBox(gtx, &g.w.slH, 64) },
-									func(gtx C) D { return label(gtx, ":", 13, pal.Dim) },
+									func(gtx C) D { return txt(gtx, ":", textStyle{Size: fsBody, Col: colText3}) },
 									func(gtx C) D { g.w.slM.sync(gtx, 0); return numBox(gtx, &g.w.slM, 64) },
-									func(gtx C) D { return label(gtx, ":", 13, pal.Dim) },
+									func(gtx C) D { return txt(gtx, ":", textStyle{Size: fsBody, Col: colText3}) },
 									func(gtx C) D { g.w.slS.sync(gtx, s.SleepSeconds%60); return numBox(gtx, &g.w.slS, 64) })
 							},
 							vSpacer(8),
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "覆盖引导效果", 13, pal.Dim) },
+								return row(gtx, func(gtx C) D { return txt(gtx, "覆盖引导效果", textStyle{Size: fsBody, Col: colText3}) },
 									hSpacer(10), func(gtx C) D { return switchBox(gtx, &g.w.kbOvr) })
 							})
 					})
 				},
 				func(gtx C) D {
 					return panel(gtx, "彩色背光", func(gtx C) D {
-						// 8px 网格:分区行(标签+下拉) → 色环(210,左右留白) → 亮度(滑块与色环同宽) → 灯效行 → 提示
+						// 设置区保持紧凑宽度:分区/色环/亮度/灯效组成一列控件,
+						// 不随超宽卡片散开(方案 4.2)。
+						if maxW := gtx.Dp(ledSettingsW); gtx.Constraints.Max.X > maxW {
+							gtx.Constraints.Max.X = maxW
+							if gtx.Constraints.Min.X > maxW {
+								gtx.Constraints.Min.X = maxW
+							}
+						}
 						return col(gtx,
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "分区", 13, pal.Dim) },
+								return row(gtx, func(gtx C) D { return txt(gtx, "分区", textStyle{Size: fsBody, Col: colText3}) },
 									hSpacer(8), func(gtx C) D { return g.w.kbPart.layout(gtx) })
 							},
 							vSpacer(8),
 							func(gtx C) D {
-								return layout.Center.Layout(gtx, func(gtx C) D { return g.wheelLayout(gtx, 210) })
+								// 色环直径取令牌值,窄卡片时按可用宽度收缩;绘制与命中用同一尺寸
+								return layout.Center.Layout(gtx, func(gtx C) D { return g.wheelLayout(gtx, g.wheelDp(gtx)) })
 							},
 							vSpacer(8),
 							func(gtx C) D {
+								// 亮度行:OFF ↔ 当前值 + 滑块。单列宽卡片里若跟随容器,
+								// 滑块会被拉到上千 dp,与色环比例严重失衡(P0)。
+								if w := gtx.Constraints.Max.X; w > gtx.Dp(sliderMaxW) {
+									gtx.Constraints.Max.X = gtx.Dp(sliderMaxW)
+								}
 								return col(gtx,
 									func(gtx C) D {
-										return row(gtx, func(gtx C) D { return label(gtx, "OFF", 11, pal.Dim) },
+										return row(gtx, func(gtx C) D { return txt(gtx, "OFF", textStyle{Size: fsSmall, Col: colText3}) },
 											layout.Flexed(1, func(gtx C) D { return D{} }),
-											func(gtx C) D { return label(gtx, fmt.Sprintf("%d / 4", g.w.kbBr.value()), 12, pal.Lime) })
+											func(gtx C) D {
+												return txt(gtx, fmt.Sprintf("%d / 4", g.w.kbBr.value()), textStyle{Size: fsBody2, Col: colOk})
+											})
 									},
 									func(gtx C) D {
 										gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -135,7 +152,7 @@ func (g *GUI) pageKB(gtx C) D {
 							},
 							vSpacer(8),
 							func(gtx C) D {
-								return row(gtx, func(gtx C) D { return label(gtx, "灯效", 13, pal.Dim) },
+								return row(gtx, func(gtx C) D { return txt(gtx, "灯效", textStyle{Size: fsBody, Col: colText3}) },
 									hSpacer(8), func(gtx C) D { return g.w.kbEff.layout(gtx) },
 									layout.Flexed(1, func(gtx C) D { return D{} }),
 									func(gtx C) D { return actBtn(gtx, &g.w.kbApplyEff, "应用灯效", btnPri, false) },
@@ -144,7 +161,7 @@ func (g *GUI) pageKB(gtx C) D {
 							},
 							vSpacer(6),
 							func(gtx C) D {
-								return label(gtx, "点击键盘键帽选中分区,再点色环取色下发(WMI 103 · 0xF0-0xF6)", 11, pal.Dim)
+								return txt(gtx, "点击键帽选中分区,再点色环取色并立即下发", textStyle{Size: fsSmall, Col: colText3})
 							})
 					})
 				})
@@ -156,14 +173,31 @@ func (g *GUI) pageKB(gtx C) D {
 					vSpacer(12),
 					func(gtx C) D {
 						return row(gtx,
-							func(gtx C) D { return label(gtx, kbTypeName(int(s.Type)), 12, pal.Dim) },
+							func(gtx C) D { return txt(gtx, kbTypeName(int(s.Type)), textStyle{Size: fsBody2, Col: colText3}) },
 							layout.Flexed(1, func(gtx C) D { return D{} }),
 							func(gtx C) D { return switchBox(gtx, &g.w.kbOn) },
 							hSpacer(8),
-							func(gtx C) D { return label(gtx, "灯光开关", 13, pal.Dim) })
+							func(gtx C) D { return txt(gtx, "灯光开关", textStyle{Size: fsBody, Col: colText3}) })
 					})
 			})
 		})
+}
+
+// wheelDp 色环直径:取令牌值,但不超出当前卡片可用宽度(窄卡片等比收缩)。
+// 绘制与命中用同一尺寸,避免"看得见却点不到"。
+func (g *GUI) wheelDp(gtx C) int {
+	dp := wheelSz
+	if pxPerDp := float32(gtx.Dp(1)); pxPerDp > 0 {
+		if avail := gtx.Constraints.Max.X; avail > 0 {
+			if maxDp := int(float32(avail)/pxPerDp) - sp16; maxDp < dp {
+				dp = maxDp
+			}
+		}
+	}
+	if dp < 150 {
+		dp = 150
+	}
+	return dp
 }
 
 // wheelLayout 色环布局 + 指针交互(按下取色并下发)。
@@ -223,7 +257,7 @@ func nrgba(c keyboard.Color) color.NRGBA {
 func (g *GUI) pageFlexikey(gtx C) D {
 	s := g.fk.Load()
 	if s == nil {
-		return panel(gtx, "正在加载", func(gtx C) D { return label(gtx, "正在读取 profile.xml…", 14, pal.Dim) })
+		return panel(gtx, "正在加载", func(gtx C) D { return txt(gtx, "正在读取 profile.xml…", textStyle{Size: fsBig, Col: colText3}) })
 	}
 	// 配置档按钮与快照对齐
 	if g.w.fkProfN != len(s.Profiles) {
@@ -265,7 +299,7 @@ func (g *GUI) pageFlexikey(gtx C) D {
 	return col(gtx,
 		func(gtx C) D {
 			return pageHead(gtx, "FlexiKey", "键盘宏配置档与鼠标宏统计", func(gtx C) D {
-				return pillBadge(gtx, "profile.xml", colWarn)
+				return pillBadge(gtx, sel2(s.KBEnabled, "键盘宏已启用", "键盘宏已停用"), healthCol(kbKind))
 			})
 		},
 		func(gtx C) D {
@@ -276,7 +310,7 @@ func (g *GUI) pageFlexikey(gtx C) D {
 		},
 		vSpacer(10),
 		func(gtx C) D {
-			return grid2(gtx, 4, 5,
+			return fkSplit(gtx,
 				func(gtx C) D {
 					return panel(gtx, "配置档", func(gtx C) D {
 						profBtns := make([]layout.Widget, 0, len(s.Profiles))
@@ -320,7 +354,7 @@ func (g *GUI) pageFlexikey(gtx C) D {
 							func(gtx C) D { return kbLayout(gtx, nil, &g.w.kbGrid, nil) },
 							vSpacer(8),
 							func(gtx C) D {
-								return label(gtx, "宏键明细编辑请直接修改 profile.xml(键位/宏序列/文本宏/启动程序),此处选择配置档并下发到 HKFltr 过滤驱动。", 12, pal.Dim)
+								return txt(gtx, "宏键明细编辑请直接修改 profile.xml(键位/宏序列/文本宏/启动程序),此处选择配置档并下发到 HKFltr 过滤驱动。", textStyle{Size: fsBody2, Col: colText3})
 							})
 					})
 				})
@@ -339,7 +373,7 @@ func sel2(b bool, a, c string) string {
 func (g *GUI) pageCharger(gtx C) D {
 	s := g.charger.Load()
 	if s == nil {
-		return panel(gtx, "正在加载", func(gtx C) D { return label(gtx, "正在读取充电配置…", 14, pal.Dim) })
+		return panel(gtx, "正在加载", func(gtx C) D { return txt(gtx, "正在读取充电配置…", textStyle{Size: fsBig, Col: colText3}) })
 	}
 	fc := s.Pref.FlexiCharger
 	for i := 0; i < 3; i++ {
@@ -378,7 +412,7 @@ func (g *GUI) pageCharger(gtx C) D {
 			})
 		},
 		func(gtx C) D {
-			return grid2(gtx, 5, 4,
+			return grid2Fill(gtx, 5, 4,
 				func(gtx C) D {
 					return panel(gtx, "电池充电选项", func(gtx C) D {
 						rows := make([]layout.Widget, 0, 7)
@@ -394,8 +428,10 @@ func (g *GUI) pageCharger(gtx C) D {
 								return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx,
 									layout.Rigid(func(gtx C) D {
 										return col(gtx,
-											func(gtx C) D { return label(gtx, "容量不足时开始充电", 12, pal.Dim) },
-											func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStart.value()), 34, pal.Lime) },
+											func(gtx C) D { return txt(gtx, "容量不足时开始充电", textStyle{Size: fsBody2, Col: colText3}) },
+											func(gtx C) D {
+												return txt(gtx, fmt.Sprintf("%d", g.w.fcStart.value()), textStyle{Size: 34, Col: colOk})
+											},
 											func(gtx C) D {
 												gtx.Constraints.Min.X = gtx.Dp(180)
 												return g.w.fcStart.layout(gtx)
@@ -403,8 +439,8 @@ func (g *GUI) pageCharger(gtx C) D {
 									}),
 									layout.Rigid(func(gtx C) D {
 										return col(gtx,
-											func(gtx C) D { return label(gtx, "容量达到时停止充电", 12, pal.Dim) },
-											func(gtx C) D { return label(gtx, fmt.Sprintf("%d", g.w.fcStop.value()), 34, pal.Lime) },
+											func(gtx C) D { return txt(gtx, "容量达到时停止充电", textStyle{Size: fsBody2, Col: colText3}) },
+											func(gtx C) D { return txt(gtx, fmt.Sprintf("%d", g.w.fcStop.value()), textStyle{Size: 34, Col: colOk}) },
 											func(gtx C) D {
 												gtx.Constraints.Min.X = gtx.Dp(180)
 												return g.w.fcStop.layout(gtx)
@@ -416,7 +452,7 @@ func (g *GUI) pageCharger(gtx C) D {
 								return row(gtx, func(gtx C) D { return actBtn(gtx, &g.w.fcApply, "应用", btnPri, false) },
 									hSpacer(12),
 									func(gtx C) D {
-										return label(gtx, "下发:WMI4 sub31 · 记住选择,开机自动回写 EC", 12, pal.Dim)
+										return txt(gtx, "应用后立即生效,开机时自动回写", textStyle{Size: fsBody2, Col: colText3})
 									})
 							})
 						return col(gtx, rows...)
@@ -427,13 +463,17 @@ func (g *GUI) pageCharger(gtx C) D {
 						hasBat := s.Bat.Design > 0
 						return col(gtx,
 							func(gtx C) D {
-								txt := "— 本机无电池管理支持位 —"
+								msg := "— 本机无电池管理支持位 —"
 								if hasBat {
-									txt = "已插入电源"
+									msg = "已插入电源"
 								}
-								td, call := textDims(gtx, txt, 13, pal.Lime)
-								replayText(gtx, call, (gtx.Constraints.Max.X-td.Size.X)/2, 0)
-								return D{Size: image.Pt(gtx.Constraints.Max.X, td.Size.Y)}
+								if w := gtx.Constraints.Max.X; w > 0 {
+									gtx.Constraints.Min.X = w
+								}
+								return layout.Flex{Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx,
+									layout.Rigid(func(gtx C) D {
+										return txt(gtx, msg, textStyle{Size: fsBody, Col: colOk})
+									}))
 							},
 							vSpacer(8),
 							func(gtx C) D {
@@ -466,9 +506,9 @@ func (g *GUI) fcRadioRow(gtx C, clk *widget.Clickable, on bool, lbl, desc string
 				return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
 			}),
 			layout.Rigid(hSpacer(10)),
-			layout.Rigid(func(gtx C) D { return label(gtx, lbl, 13, pal.Txt) }),
+			layout.Rigid(func(gtx C) D { return txt(gtx, lbl, textStyle{Size: fsBody, Col: colText}) }),
 			layout.Rigid(hSpacer(12)),
-			layout.Rigid(func(gtx C) D { return label(gtx, desc, 12, pal.Dim) }),
+			layout.Rigid(func(gtx C) D { return txt(gtx, desc, textStyle{Size: fsBody2, Col: colText3}) }),
 		)
 	})
 }
@@ -481,4 +521,19 @@ func kbPartNameOf(part string) string {
 		}
 	}
 	return part
+}
+
+// fkSplit FlexiKey 的「配置档 / 键盘槽位」两栏:键盘至少需要 kbMinW 才能
+// 完整显示键帽标签,右列拿不到该宽度时改为上下排列,而不是把键盘压扁
+// 或塞进横向滚动(方案 4.3)。
+func fkSplit(gtx C, l, r layout.Widget) D {
+	const wl, wr float32 = 1, 2
+	w := gtx.Constraints.Max.X
+	gap := gtx.Dp(sp16)
+	rw := int(float32(w-gap) * wr / (wl + wr))
+	if w < gtx.Dp(gridPairW) || rw < gtx.Dp(kbMinW) {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(l), layout.Rigid(vSpacer(sp16)), layout.Rigid(r))
+	}
+	return grid2Fill(gtx, wl, wr, l, r)
 }

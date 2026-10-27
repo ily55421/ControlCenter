@@ -9,18 +9,20 @@ import (
 	draw "image/draw"
 	"math"
 	"os"
+	"sync"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
-	"sync"
 )
 
 // strokeSegs 一次 stroke 描多条不相连线段(共享路径,省 draw op)。
@@ -87,13 +89,11 @@ func drawDial(gtx C, val, maxV float32, o dialOpt) D {
 	strokeSegs(gtx, segs, 1, color.NRGBA{R: 0x33, G: 0x3C, B: 0x45, A: 0xFF})
 	// 弧上标签
 	if len(o.labels) > 0 {
+		st := textStyle{Size: fsBody2, Col: colText3}
 		for i, t := range o.labels {
 			a := a0 + (a1-a0)*float64(i)/float64(len(o.labels)-1)
 			c, s := dir(a)
-			td, call := textDims(gtx, t, 12, color.NRGBA{R: 0x8A, G: 0x94, B: 0x9E, A: 0xFF})
-			x := int(cx+c*(float32(R)-px(gtx, 22))) - td.Size.X/2
-			y := int(cy+s*(float32(R)-px(gtx, 22))) - td.Size.Y/2
-			replayText(gtx, call, x, y)
+			centerTextAt(gtx, cx+c*(float32(R)-px(gtx, 22)), cy+s*(float32(R)-px(gtx, 22)), t, st)
 		}
 	}
 	// 进度弧:三层描边模拟辉光
@@ -127,8 +127,7 @@ func drawDial(gtx C, val, maxV float32, o dialOpt) D {
 	fillCircle(gtx, cx, cy, px(gtx, 7), color.NRGBA{R: 0x05, G: 0x07, B: 0x08, A: 0xFF})
 	// 弧下中心文本
 	if o.center != "" {
-		td, call := textDims(gtx, o.center, 14, color.NRGBA{R: 0xCF, G: 0xD6, B: 0xDC, A: 0xFF})
-		replayText(gtx, call, int(cx)-td.Size.X/2, int(cy+float32(R)*0.62)-td.Size.Y/2)
+		centerTextAt(gtx, cx, cy+float32(R)*0.62, o.center, textStyle{Size: fsBig, Col: colText})
 	}
 	return D{Size: image.Pt(w, h)}
 }
@@ -210,10 +209,12 @@ func colorWheel(gtx C, sizeDp int, zoneName, hex string, selAngle *float64) D {
 		fillCircle(gtx, cx+c*(inner+outer)/2, cy+s2*(inner+outer)/2, px(gtx, 5), pal.Txt)
 	}
 	// 中心区名 + hex
-	td1, c1 := textDims(gtx, zoneName, 14, color.NRGBA{R: 0xCF, G: 0xD6, B: 0xDC, A: 0xFF})
-	replayText(gtx, c1, int(cx)-td1.Size.X/2, int(cy)-td1.Size.Y-gtx.Dp(2))
-	td2, c2 := textDims(gtx, hex, 13, pal.Dim)
-	replayText(gtx, c2, int(cx)-td2.Size.X/2, int(cy)+gtx.Dp(4))
+	stZone := textStyle{Size: fsBig, Col: colText}
+	d1 := measureText(gtx, zoneName, stZone)
+	drawTextAt(gtx, int(cx)-d1.Size.X/2, int(cy)-d1.Size.Y-gtx.Dp(2), zoneName, stZone)
+	stHex := textStyle{Size: fsBody, Col: colText3}
+	d2 := measureText(gtx, hex, stHex)
+	drawTextAt(gtx, int(cx)-d2.Size.X/2, int(cy)+gtx.Dp(4), hex, stHex)
 	return D{Size: image.Pt(s, s)}
 }
 
@@ -261,64 +262,108 @@ var kbRows = [][]kbKey{
 	{{"Ctrl", 1.3}, {"Fn", 1.1}, {"Win", 1.2}, {"Alt", 1.2}, {"", 4.6}, {"Alt", 1.2}, {"Menu", 1.2}, {"Ctrl", 1.3}, {"←", 0.9}, {"↓", 0.9}, {"→", 0.9}},
 }
 
-// KBGrid 键盘点选状态(单一热区 + 坐标换算;LED 页用)。
+// KBGrid 键盘点选状态(单一热区 + 坐标换算;LED 页与 FlexiKey 槽位共用)。
 // 92 个子 Clickable 在 panel 宏录制 + List 视口裁剪的组合下绘制/命中行为
 // 不可控(实测只剩首键),改为整块键盘一个热区,点击坐标反查键位。
 type KBGrid struct {
 	Tag        event.Tag
+	ScrollTag  event.Tag   // 滚轮热区(与点击热区分开,避免滚轮事件被当作按下)
 	SelR, SelC int         // 选中键(-1 无)
+	off        float32     // 水平滚动偏移(px;键盘比卡片宽时)
 	sz         image.Point // 最近一帧键盘尺寸(点击换算用)
+}
+
+// kbGeom 键盘图的几何(设备像素),全部由 Dp 令牌折算。
+// 原先 kbLayout / kbKeyRect / kbHitTest / renderKeyboardImage 各自裸写 36/5
+// 设备像素:高 DPI 下整图不放大、键帽标签相对更小,视觉与命中会分叉(P2)。
+type kbGeom struct {
+	w, h  int // 渲染宽(≥可见宽)与键盘本体高
+	viewW int // 可见宽(卡片内可用宽度)
+	keyH  int
+	gap   int
+}
+
+// kbGeomFor 按可用宽度算几何:不足 kbMinW 时保持最小可读宽度,由调用方横向滚动。
+func kbGeomFor(gtx C, availW int) kbGeom {
+	keyH, gap := gtx.Dp(kbKeyH), gtx.Dp(kbKeyGap)
+	minW := gtx.Dp(kbMinW)
+	viewW := availW
+	// 约束未定(Max.X 无限大)或异常值时退回最小宽度,避免分配超大离屏位图
+	if viewW <= 0 || viewW > minW*8 {
+		viewW = minW
+	}
+	w := viewW
+	if w < minW {
+		w = minW
+	}
+	h := len(kbRows)*(keyH+gap) - gap
+	return kbGeom{w: w, h: h, viewW: viewW, keyH: keyH, gap: gap}
+}
+
+// maxOff 水平滚动最大偏移。
+func (k kbGeom) maxOff() int { return k.w - k.viewW }
+
+// kbZoneKey 贴图缓存键里的分区色摘要:三段颜色都要进 key。
+// 原先只用 zoneColors[0],只改中/右分区时贴图不刷新(颜色不跟随选择)。
+func kbZoneKey(c *[3]color.NRGBA) string {
+	if c == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+		c[0].R, c[0].G, c[0].B, c[1].R, c[1].G, c[1].B, c[2].R, c[2].G, c[2].B)
 }
 
 // kbLayout 键盘可视化:渲染为离屏 image 再贴图(paint.ImageOp)。
 // 弃用矢量 op 流的原因:92 键的绘制在 panel 宏 + List 视口组合下出现
 // 系统性偏移/截断(多轮插桩无法根治),image 贴图 100% 确定性。
 // 键帽文字用 basicfont(拉丁,键帽标签全为拉丁/符号)。
-// 缓存键:宽度+选中键+分区色 —— 变化才重渲染,静止零开销。
+// 缓存键:渲染宽 + DPI 派生的键高/间距 + 选中键 + 三段分区色 —— 变化才重渲染,
+// 静止零开销。可用宽度不足 kbMinW 时按最小宽度渲染,并在卡片内局部横向滚动
+// (滚轮),底部给出可见滚动条;点击命中会加上滚动偏移,与显示位置一致。
 func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c int)) D {
-	totalW := gtx.Constraints.Max.X
-	// 交互:单一热区,点击坐标反查键位
-	defer func() {
-		if grid == nil {
-			return
-		}
-	}()
-	h := len(kbRows)*(36+5) - 5
-
-	// 缓存判定
+	gm := kbGeomFor(gtx, gtx.Constraints.Max.X)
+	if grid != nil && grid.ScrollTag == nil {
+		grid.ScrollTag = &grid.ScrollTag // 必须是独立 tag,不能与点击共用
+	}
 	selKey := -1
-	if grid != nil && grid.SelR >= 0 && grid.SelC < len(kbRows[grid.SelR]) {
+	if grid != nil && grid.SelR >= 0 && grid.SelC >= 0 && grid.SelC < len(kbRows[grid.SelR]) {
 		selKey = grid.SelR*100 + grid.SelC
 	}
-	zoneKey := 0
-	if zoneColors != nil {
-		zoneKey = int(zoneColors[0].R)<<16 | int(zoneColors[0].G)<<8 | int(zoneColors[0].B)
-	}
-	cacheKey := fmt.Sprintf("%d|%d|%d", totalW, selKey, zoneKey)
+
+	// 缓存判定
+	cacheKey := fmt.Sprintf("%d|%d|%d|%d|%s", gm.w, gm.keyH, gm.gap, selKey, kbZoneKey(zoneColors))
 	kbImgMu.Lock()
 	if kbImg.key != cacheKey || kbImg.img == nil {
-		kbImg.img = renderKeyboardImage(totalW, selKey, zoneColors)
+		kbImg.img = renderKeyboardImage(gm, selKey, zoneColors)
 		kbImg.key = cacheKey
+		kbImg.op = paint.NewImageOp(kbImg.img)
 	}
 	imgOp := kbImg.op
-	if kbImg.key == cacheKey && kbImg.op == (paint.ImageOp{}) {
-		kbImg.op = paint.NewImageOp(kbImg.img)
-		imgOp = kbImg.op
-	}
 	kbImgMu.Unlock()
 
-	// 贴图
-	defer clip.Rect(image.Rect(0, 0, totalW, h)).Push(gtx.Ops).Pop()
+	// 滚动偏移与滚动条占位
+	offPx := 0
+	barH := 0
+	if grid != nil && gm.maxOff() > 0 {
+		offPx = int(clamp(grid.off, 0, float32(gm.maxOff())))
+		barH = gtx.Dp(6)
+	}
+
+	// 绘制:可见区裁剪 + 水平偏移
+	area := clip.Rect(image.Rect(0, 0, gm.viewW, gm.h)).Push(gtx.Ops)
+	offStack := op.Offset(image.Pt(-offPx, 0)).Push(gtx.Ops)
 	imgOp.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
-
 	// 选中键描边(矢量,实时)
-	if grid != nil && grid.SelR >= 0 {
-		rect := kbKeyRect(totalW, grid.SelR, grid.SelC)
-		border(gtx, rect.Inset(-1), pal.Cyan, 2)
+	if grid != nil && selKey >= 0 {
+		border(gtx, kbKeyRect(gm, grid.SelR, grid.SelC).Inset(-1), pal.Cyan, 2)
 	}
-	// 点击热区 + 坐标反查
+	offStack.Pop()
+	area.Pop()
+
+	// 交互:热区声明在未偏移坐标系,命中时把坐标换算回渲染坐标
 	if grid != nil {
+		hitArea := clip.Rect(image.Rect(0, 0, gm.viewW, gm.h)).Push(gtx.Ops)
 		event.Op(gtx.Ops, grid.Tag)
 		for {
 			ev, ok := gtx.Event(pointer.Filter{Target: grid.Tag, Kinds: pointer.Press})
@@ -329,7 +374,7 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 			if !ok || pe.Kind != pointer.Press {
 				continue
 			}
-			if r, c, hit := kbHitTest(totalW, int(pe.Position.X), int(pe.Position.Y)); hit {
+			if r, c, hit := kbHitTest(gm, int(pe.Position.X)+offPx, int(pe.Position.Y)); hit {
 				grid.SelR, grid.SelC = r, c
 				if onTap != nil {
 					onTap(r, c)
@@ -337,44 +382,82 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 				g.win.Invalidate()
 			}
 		}
+		// 滚轮:横向滚动(Shift+滚轮给 Scroll.X,普通滚轮给 Scroll.Y)
+		event.Op(gtx.Ops, grid.ScrollTag)
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: grid.ScrollTag, Kinds: pointer.Scroll})
+			if !ok {
+				break
+			}
+			pe, ok := ev.(pointer.Event)
+			if !ok || pe.Kind != pointer.Scroll {
+				continue
+			}
+			d := pe.Scroll.X
+			if d == 0 {
+				d = pe.Scroll.Y
+			}
+			if d != 0 && gm.maxOff() > 0 {
+				grid.off = clamp(grid.off-d*0.5, 0, float32(gm.maxOff()))
+				g.win.Invalidate()
+			}
+		}
+		hitArea.Pop()
 	}
-	return D{Size: image.Pt(totalW, h)}
+
+	// 局部横向滚动指示:内容比卡片宽时给出可见提示
+	if barH > 0 {
+		y := gm.h
+		fillArea(gtx, image.Rect(0, y, gm.viewW, y+barH), alpha(pal.Line, 0x33))
+		thumbW := int(float32(gm.viewW) * float32(gm.viewW) / float32(gm.w))
+		if minW := gtx.Dp(28); thumbW < minW {
+			thumbW = minW
+		}
+		x0 := int(float32(gm.viewW-thumbW) * clamp01(float32(offPx)/float32(gm.maxOff())))
+		fillArea(gtx, image.Rect(x0, y, x0+thumbW, y+barH), alpha(pal.Cyan, 0xB0))
+	}
+	return D{Size: image.Pt(gm.viewW, gm.h+barH)}
 }
 
-// kbKeyRect 键位 → 矩形(与 renderKeyboardImage 同一几何)。
-func kbKeyRect(totalW, ri, ci int) image.Rectangle {
-	gap, keyH := 5, 36
-	y := ri * (keyH + gap)
+// kbRowEdge 行内第 i 个键的右边界(像素)。
+// 用累计边界取整,整行正好铺满渲染宽度:逐键截断会让每行累计出几像素空隙,
+// 17 列 × 150% 缩放下右侧能空出 20+px(实测),看起来就是"右侧被裁/不齐"。
+func kbRowEdge(gm kbGeom, ri, i int) int {
+	row := kbRows[ri]
+	if i < 0 {
+		return 0
+	}
+	if i >= len(row)-1 {
+		return gm.w
+	}
 	sum := 0.0
-	for _, k := range kbRows[ri] {
+	for _, k := range row {
 		sum += float64(k.w)
 	}
-	x := 0
-	for i := 0; i < ci && i < len(kbRows[ri]); i++ {
-		x += int(float64(totalW-(len(kbRows[ri])-1)*gap)*float64(kbRows[ri][i].w)/sum) + gap
+	avail := float64(gm.w - (len(row)-1)*gm.gap)
+	acc := 0.0
+	for j := 0; j <= i; j++ {
+		acc += float64(row[j].w)
 	}
-	kw := int(float64(totalW-(len(kbRows[ri])-1)*gap) * float64(kbRows[ri][ci].w) / sum)
-	return image.Rect(x, y, x+kw, y+keyH)
+	return int(math.Round(avail*acc/sum)) + i*gm.gap
 }
 
-// kbHitTest 屏幕坐标 → 键位。
-func kbHitTest(totalW, px, py int) (r, c int, hit bool) {
-	gap, keyH := 5, 36
-	r = py / (keyH + gap)
-	if r < 0 || r >= len(kbRows) || py > r*(keyH+gap)+keyH {
+// kbKeyRect 键位 → 矩形(绘制与命中共用同一几何)。
+func kbKeyRect(gm kbGeom, ri, ci int) image.Rectangle {
+	y := ri * (gm.keyH + gm.gap)
+	return image.Rect(kbRowEdge(gm, ri, ci-1), y, kbRowEdge(gm, ri, ci), y+gm.keyH)
+}
+
+// kbHitTest 渲染坐标 → 键位(调用方负责把可见坐标加上滚动偏移)。
+func kbHitTest(gm kbGeom, px, py int) (r, c int, hit bool) {
+	r = py / (gm.keyH + gm.gap)
+	if r < 0 || r >= len(kbRows) || py > r*(gm.keyH+gm.gap)+gm.keyH {
 		return 0, 0, false
 	}
-	x := 0
-	sum := 0.0
-	for _, k := range kbRows[r] {
-		sum += float64(k.w)
-	}
-	for ci, k := range kbRows[r] {
-		kw := int(float64(totalW-(len(kbRows[r])-1)*gap) * float64(k.w) / sum)
-		if px >= x && px < x+kw {
+	for ci := range kbRows[r] {
+		if x0, x1 := kbRowEdge(gm, r, ci-1), kbRowEdge(gm, r, ci); px >= x0 && px < x1 {
 			return r, ci, true
 		}
-		x += kw + gap
 	}
 	return 0, 0, false
 }
@@ -389,21 +472,14 @@ var (
 )
 
 // renderKeyboardImage 离屏渲染 92 键(basicfont 拉丁标签)。
-func renderKeyboardImage(totalW, selKey int, zoneColors *[3]color.NRGBA) *image.RGBA {
-	gap, keyH := 5, 36
-	h := len(kbRows)*(keyH+gap) - gap
-	img := image.NewRGBA(image.Rect(0, 0, totalW, h))
+func renderKeyboardImage(gm kbGeom, selKey int, zoneColors *[3]color.NRGBA) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, gm.w, gm.h))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.NRGBA{R: 0x0B, G: 0x0D, B: 0x0F, A: 0xFF}}, image.Point{}, draw.Src)
 
 	for ri, r := range kbRows {
-		sum := 0.0
-		for _, k := range r {
-			sum += float64(k.w)
-		}
-		x := 0
 		for ci, k := range r {
-			kw := int(float64(totalW-(len(r)-1)*gap) * float64(k.w) / sum)
-			rect := image.Rect(x, ri*(keyH+gap), x+kw, ri*(keyH+gap)+keyH)
+			// 与 kbKeyRect 同一几何(累计边界),绘制/描边/命中不会互相偏离
+			rect := kbKeyRect(gm, ri, ci)
 			zone := color.NRGBA{}
 			if zoneColors != nil && ri >= 1 && ri <= 4 {
 				switch {
@@ -437,14 +513,13 @@ func renderKeyboardImage(totalW, selKey int, zoneColors *[3]color.NRGBA) *image.
 			draw.Draw(img, image.Rect(rect.Max.X-1, rect.Min.Y, rect.Max.X, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
 			// 标签
 			if k.label != "" {
-				w := len(k.label) * 7
+				w := utf8.RuneCountInString(k.label) * 7
 				tx := rect.Min.X + (rect.Dx()-w)/2
 				ty := rect.Min.Y + (rect.Dy()-13)/2
 				fd := font.Drawer{Dst: img, Src: image.White, Face: basicfont.Face7x13}
 				fd.Dot = fixed.P(tx, ty+11)
 				fd.DrawString(k.label)
 			}
-			x += kw + gap
 		}
 	}
 	return img
@@ -480,8 +555,8 @@ func drawKeycap(gtx C, r image.Rectangle, lbl string, zone color.NRGBA) {
 	if lbl == "" {
 		return
 	}
-	td, call := textDims(gtx, lbl, 11, color.NRGBA{R: 0xB9, G: 0xC2, B: 0xCA, A: 0xFF})
-	replayText(gtx, call, (r.Min.X+r.Max.X-td.Size.X)/2, (r.Min.Y+r.Max.Y-td.Size.Y)/2)
+	centerTextAt(gtx, float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2, lbl,
+		textStyle{Size: fsSmall, Col: colText2})
 }
 
 // ---------- 电池轮廓 ----------
@@ -507,12 +582,11 @@ func batteryOutline(gtx C, pct int, hasBat bool) D {
 		}
 	}
 	// 百分比
-	txt := "—"
+	pctStr := "—"
 	if hasBat {
-		txt = itoa(pct) + " %"
+		pctStr = itoa(pct) + " %"
 	}
-	td, call := textDims(gtx, txt, 50, pal.Txt)
-	replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
+	centerTextAt(gtx, float32(w)/2, float32(h)/2, pctStr, textStyle{Size: fsHero, Col: colText})
 	return D{Size: image.Pt(w+gtx.Dp(10), h)}
 }
 
@@ -540,21 +614,32 @@ func itoa(v int) string {
 
 // ---------- FN+Backspace 图形 ----------
 
-// fnBsChip "FN + Backspace ⌫" 提示块。
+// fnBsChip "FN + Backspace" 提示块:三段文本用 Flex 排,边框作为 Stack 的底铺满。
 func fnBsChip(gtx C) D {
-	td1, c1 := textDims(gtx, "FN", 18, pal.Txt)
-	td2, c2 := textDims(gtx, "+", 14, pal.Dim)
-	td3, c3 := textDims(gtx, "Backspace", 18, pal.Txt)
-	w := td1.Size.X + td2.Size.X + td3.Size.X + gtx.Dp(36)
-	h := td1.Size.Y + gtx.Dp(20)
-	border(gtx, image.Rect(0, 0, w, h), color.NRGBA{R: 0x2C, G: 0x34, B: 0x3C, A: 0xFF}, 1)
-	x := gtx.Dp(18)
-	replayText(gtx, c1, x, (h-td1.Size.Y)/2)
-	x += td1.Size.X + gtx.Dp(10)
-	replayText(gtx, c2, x, (h-td2.Size.Y)/2)
-	x += td2.Size.X + gtx.Dp(10)
-	replayText(gtx, c3, x, (h-td3.Size.Y)/2)
-	return D{Size: image.Pt(w, h)}
+	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+		layout.Stacked(func(gtx C) D {
+			return layout.Inset{Left: 18, Right: 18, Top: 10, Bottom: 10}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx C) D {
+						return txt(gtx, "FN", textStyle{Size: fsTitle, Col: colText})
+					}),
+					layout.Rigid(hSpacer(10)),
+					layout.Rigid(func(gtx C) D {
+						return txt(gtx, "+", textStyle{Size: fsBig, Col: colText3})
+					}),
+					layout.Rigid(hSpacer(10)),
+					layout.Rigid(func(gtx C) D {
+						return txt(gtx, "Backspace", textStyle{Size: fsTitle, Col: colText})
+					}),
+				)
+			})
+		}),
+		layout.Expanded(func(gtx C) D {
+			r := image.Rectangle{Max: gtx.Constraints.Min}
+			border(gtx, r, colLineHi, 1)
+			return D{Size: r.Max}
+		}),
+	)
 }
 
 // ---------- 多序列实时图表(CPU 监控:温度/利用率) ----------
@@ -597,9 +682,10 @@ func drawMultiChart(gtx C, hDp int, series []chartSeries) D {
 		if len(s.data) > 0 {
 			cur = fmt.Sprintf("%s %.0f", s.label, s.data[len(s.data)-1])
 		}
-		td, call := textDims(gtx, cur, 11, s.col)
+		st := textStyle{Size: fsSmall, Col: s.col}
+		td := measureText(gtx, cur, st)
 		fillArea(gtx, image.Rect(x, gtx.Dp(7), x+gtx.Dp(8), gtx.Dp(7)+gtx.Dp(3)), s.col)
-		replayText(gtx, call, x+gtx.Dp(12), gtx.Dp(5))
+		drawTextAt(gtx, x+gtx.Dp(12), gtx.Dp(5), cur, st)
 		x += td.Size.X + gtx.Dp(26)
 	}
 	return D{Size: image.Pt(w, h)}
@@ -682,10 +768,11 @@ func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx, curTemp int) D {
 		fillCircle(gtx, c.X, c.Y, r*0.45, color.NRGBA{R: 0x00, G: 0x16, B: 0x1C, A: 0xFF})
 		// 点位标签(温度,占空),贴点下方
 		lbl := fmt.Sprintf("%d,%d%%", p[0], p[1])
-		td, call := textDims(gtx, lbl, 10, pal.Dim)
+		st := textStyle{Size: fsTiny, Col: colText3}
+		td := measureText(gtx, lbl, st)
 		lx := clampI(int(c.X)-td.Size.X/2, 2, w-td.Size.X-2)
 		ly := clampI(int(c.Y)+gtx.Dp(6), 0, h-td.Size.Y)
-		replayText(gtx, call, lx, ly)
+		drawTextAt(gtx, lx, ly, lbl, st)
 	}
 	return D{Size: image.Pt(w, h)}
 }

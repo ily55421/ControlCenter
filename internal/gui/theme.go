@@ -11,16 +11,13 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
-	"gioui.org/font/opentype"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
@@ -77,37 +74,17 @@ var pal = struct {
 	Head:        colText,
 }
 
-// ---------- 主题(微软雅黑,确定性渲染) ----------
+// ---------- 主题(内嵌子集字体 + 系统回退) ----------
 
 func newTheme() *material.Theme {
 	th := material.NewTheme()
-	if faces := loadCJKFonts(); len(faces) > 0 {
-		th.Shaper = text.NewShaper(text.WithCollection(faces), text.NoSystemFonts())
+	if faces := embeddedFonts(); len(faces) > 0 {
+		// 保留系统字体回退:子集没有的字形(▾ ▴ ↵ ⚡ ✓ ✗)由系统补齐,
+		// 关掉回退会让它们渲染成空白(雅黑本身也没有这些字形,实测)。
+		th.Shaper = text.NewShaper(text.WithCollection(faces))
 	}
 	th.TextSize = unit.Sp(14)
 	return th
-}
-
-// loadCJKFonts 加载系统微软雅黑(全部 Windows 自带);缺失时保留默认 shaper(系统字体回退)。
-// 注册顺序即优先级:msyh.ttc 常规在前,msyhbd.ttc 粗体在后(带 OS/2 权重,可被粗体标签匹配)。
-func loadCJKFonts() []text.FontFace {
-	var faces []text.FontFace
-	for _, f := range []string{`C:\Windows\Fonts\msyh.ttc`, `C:\Windows\Fonts\msyhbd.ttc`} {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		ff, err := opentype.ParseCollection(b)
-		if err != nil {
-			continue
-		}
-		for i := range ff {
-			// 统一字体族名,粗体也能被同一族名匹配到
-			ff[i].Font.Typeface = "MS YaHei"
-		}
-		faces = append(faces, ff...)
-	}
-	return faces
 }
 
 // ---------- 基础绘制 ----------
@@ -238,27 +215,6 @@ func centerRow(gtx C, items ...layout.Widget) D {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx, flexWrap(items...)...)
 }
 
-// label 文本(样式简写)。
-func label(gtx C, txt string, sizeSp float32, colr color.NRGBA) D {
-	l := material.Label(g.th, unit.Sp(sizeSp), txt)
-	l.Color = colr
-	return l.Layout(gtx)
-}
-
-// textDims 只测文本尺寸,绘制 ops 留待回放(先底后字的次序靠它保证)。
-func textDims(gtx C, txt string, sizeSp float32, colr color.NRGBA) (D, op.CallOp) {
-	m := op.Record(gtx.Ops)
-	d := label(gtx, txt, sizeSp, colr)
-	return d, m.Stop()
-}
-
-// replayText 在 (x,y) 偏移处回放测好的文本。
-func replayText(gtx C, call op.CallOp, x, y int) {
-	// 变换必须用完即弹,否则整个后续帧都会被累计平移(曾致表盘文字/布局漂移)
-	defer op.Affine(f32.NewAffine2D(1, 0, float32(x), 0, 1, float32(y))).Push(gtx.Ops).Pop()
-	call.Add(gtx.Ops)
-}
-
 // ---------- 角标面板 ----------
 
 // panel 角标面板:边框 + 四角 L 形标记 + 标题 + 内容。
@@ -275,111 +231,148 @@ func spreadCn(s string) string {
 	return string(out)
 }
 
-// card 卡片:柔和投影 + 半透明描边 + 16dp 圆角 + 顶边高光,可选头部图标与副标题、右上角动作位。
-// 层序严格为 底 → 头部 → 内容:内容先录制再回放,避免文字被底色盖住。
+// card 卡片:柔和投影 + 半透明描边 + 圆角 + 顶边高光,可选头部图标/副标题/右上动作。
+//
+// 层序用 layout.Stack 表达(底 → 内容),不再"先量一遍再画一遍":旧写法要把 body
+// 录进 scratch ops 量高度、画完底再真实布局第二遍,而改用 op.Record 回放会让卡片里的
+// 文字整段消失(material 宏与 glyph 宏 ID 错位,实测)。Stack 的 Expanded 层拿到的
+// 最小尺寸就是各 Stacked 层的最大尺寸,底天然等于内容尺寸,一遍即可。
 func card(gtx C, o cardOpt, body layout.Widget) D {
 	// 宽度锁满(页面靠它铺满一列),高度必须放开让内容按自然高度排布:
 	// 若沿用 Exact 约束,内层 Flex/Inset 会把高度压成剩余空间,卡片被"压扁"。
 	if gtx.Constraints.Max.X > 0 {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	}
-	if gtx.Constraints.Min.Y == gtx.Constraints.Max.Y {
-		gtx.Constraints.Max.Y = math.MaxInt32 / 2
-		gtx.Constraints.Min.Y = 0
+	// 撑高请求:调用方用 Min.Y 指定卡片高度(页面填充),此时底色要画满该高度。
+	fillH := 0
+	if gtx.Constraints.Min.Y > 0 && gtx.Constraints.Min.Y != gtx.Constraints.Max.Y {
+		fillH = gtx.Constraints.Min.Y - sp16
 	}
-	return layout.Inset{Bottom: unit.Dp(sp12)}.Layout(gtx, func(gtx C) D {
-		// 1) 量内容:用独立的 scratchOps 测量,只拿尺寸不落任何 op。
-		// 不能用「op.Record 录制 + 回放」,因为录制期的 material 宏与回放期的 glyph 宏 ID 会错位,
-		// 表现为卡片里文字整段消失(实测)。
-		padX := Snap(gtx, cardPadX)
-		padY := Snap(gtx, cardPadY)
-		var scratch op.Ops
-		gxBody := gtx
-		gxBody.Ops = &scratch
-		gxBody.Constraints.Min = image.Pt(0, 0)
-		gxBody.Constraints.Max = image.Pt(maxI(gtx.Constraints.Max.X-2*padX, 0), gtx.Constraints.Max.Y)
-		inner := body(gxBody)
-
-		w := inner.Size.X + 2*padX
-		if gtx.Constraints.Min.X == gtx.Constraints.Max.X && gtx.Constraints.Max.X > 0 {
-			w = gtx.Constraints.Max.X // 宽度锁满时铺满约束
-		}
-		if w <= 2*padX {
-			w = 2*padX + gtx.Dp(unit.Dp(120)) // 兜底:内容没报宽度时也给一个可用宽度
-		}
-		headH := 0
-		if o.title != "" {
-			headH = Snap(gtx, hdrH)
-		}
-		h := headH + inner.Size.Y + 2*padY
-		r := image.Rect(0, 0, w, h)
-		rad := Snap(gtx, rCard)
-
-		// 2) 卡片底:柔和投影 → 描边色铺满 → 内缩 1px 的底(即 1px 边框)→ 顶边高光
-		softShadow(gtx, r, rad)
-		one := Snap(gtx, 1)
-		fillRR(gtx, r, rad, colLine)
-		innerRR := r.Inset(one)
-		fillRR(gtx, innerRR, rad-one, colSurface)
-		topHi(gtx, innerRR, rad-one, colTopHi)
-		if o.accent {
-			glowLine(gtx, r, colAccent, 0x66)
-		}
-
-		// 3) 头部:图标胶囊 + 标题 + 副标题 + 右上角动作
-		if o.title != "" {
-			x := padX
-			if o.icon != "" {
-				bs := Snap(gtx, iconChipSz)
-				by := (headH - bs) / 2
-				off := op.Offset(image.Pt(x, by)).Push(gtx.Ops)
-				iconChip(gtx, o.icon, colAccent)
-				off.Pop()
-				x += bs + Snap(gtx, sp10)
+	gtx.Constraints.Max.Y = math.MaxInt32 / 2
+	gtx.Constraints.Min.Y = 0
+	return layout.Inset{Bottom: sp16}.Layout(gtx, func(gtx C) D {
+		w := gtx.Constraints.Max.X
+		head := func(gtx C) D {
+			if o.title == "" {
+				return D{}
 			}
-			// 标题:实测高度居中(不用估计行高)
-			td, tcall := txtDims(gtx, o.title, textStyle{Size: fsBig, Col: colText, W: font.Medium})
-			ty := (headH - td.Size.Y) / 2
-			if o.sub != "" {
-				sd, scall := txtDims(gtx, o.sub, textStyle{Size: fsSmall, Col: colText3})
-				block := td.Size.Y + Snap(gtx, 2) + sd.Size.Y
-				ty = (headH - block) / 2
-				replayText(gtx, tcall, x, ty)
-				replayText(gtx, scall, x, ty+td.Size.Y+Snap(gtx, 2))
-			} else {
-				replayText(gtx, tcall, x, ty)
-			}
-			if o.action != nil {
-				// 右上角动作区(按钮/徽标),右对齐
-				aw := maxI(w-padX-x, gtx.Dp(80))
-				if aw > gtx.Dp(200) {
-					aw = gtx.Dp(200)
-				}
-				ax := w - padX - aw
-				if ax < x+td.Size.X+Snap(gtx, sp8) {
-					ax = x + td.Size.X + Snap(gtx, sp8)
-				}
-				aOff := op.Offset(image.Pt(ax, 0)).Push(gtx.Ops)
-				aGtx := gtx
-				aGtx.Constraints = layout.Constraints{
-					Min: image.Pt(0, 0),
-					Max: image.Pt(aw, headH),
-				}
-				layout.W.Layout(aGtx, o.action)
-				aOff.Pop()
-			}
-			// 头部与内容的分隔线(弱描边,不用纯灰实线)
-			hLine(gtx, image.Rect(padX, headH-Snap(gtx, 1), w-padX, headH), colLineSoft)
+			return cardHead(gtx, o)
 		}
+		bodyBlock := func(gtx C) D {
+			return layout.Inset{
+				Left: cardPadX, Right: cardPadX,
+				Top: cardPadY, Bottom: cardPadY,
+			}.Layout(gtx, body)
+		}
+		if fillH > 0 {
+			// 撑高:底色用显式高度(Expanded 只按内容尺寸铺底,不会跟着变长);
+			// 标题留在顶部,正文在剩余高度里垂直居中,避免"卡片很高、内容挤在顶上"。
+			gtx.Constraints.Min.Y = fillH
+			gtx.Constraints.Max.Y = fillH
+			return layout.Stack{}.Layout(gtx,
+				layout.Expanded(func(gtx C) D { return cardSurface(gtx, o) }),
+				layout.Stacked(func(gtx C) D {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(head),
+						layout.Flexed(1, func(gtx C) D {
+							return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+								layout.Stacked(func(gtx C) D {
+									if w > 0 {
+										gtx.Constraints.Min.X = w
+										gtx.Constraints.Max.X = w
+									}
+									return bodyBlock(gtx)
+								}))
+						}),
+					)
+				}),
+			)
+		}
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx C) D { return cardSurface(gtx, o) }),
+			layout.Stacked(func(gtx C) D {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(head), layout.Rigid(bodyBlock))
+			}),
+		)
+	})
+}
 
-		// 4) 内容:真实布局一遍(此时 ops 归位,文字宏与位置都对得上)
-		off := op.Offset(image.Pt(padX, headH+padY)).Push(gtx.Ops)
-		gxBody = gtx
-		gxBody.Constraints.Min = image.Pt(inner.Size.X, 0)
-		gxBody.Constraints.Max = image.Pt(maxI(w-2*padX, inner.Size.X), maxI(inner.Size.Y, 0))
-		body(gxBody)
-		off.Pop()
-		return D{Size: image.Pt(w, h)}
+// cardSurface 卡片底:投影 → 描边色铺满 → 内缩 1px 的底(即 1px 边框)→ 顶边高光。
+// 作为 Stack 的 Expanded 层,它拿到的 Min 约束已被 Stack 设为各 Stacked 层的最大尺寸,
+func cardSurface(gtx C, o cardOpt) D {
+	sz := gtx.Constraints.Min
+	r := image.Rectangle{Max: sz}
+	rad := Snap(gtx, rCard)
+	softShadow(gtx, r, rad)
+	one := Snap(gtx, 1)
+	fillRR(gtx, r, rad, colLine)
+	inner := r.Inset(one)
+	fillRR(gtx, inner, rad-one, colSurface)
+	topHi(gtx, inner, rad-one, colTopHi)
+	if o.accent {
+		glowLine(gtx, r, colAccent, 0x66)
+	}
+	return D{Size: sz}
+}
+
+// cardHead 卡片头部:图标胶囊 + 标题(可带副标题) + 右上动作,底部一条弱分隔线。
+// 垂直对齐交给 Flex{Middle},不再按 em 高度估行高 —— 那是中文标题压线的根因。
+func cardHead(gtx C, o cardOpt) D {
+	w := gtx.Constraints.Max.X
+	h := Snap(gtx, hdrH)
+	gtx.Constraints = layout.Exact(image.Pt(w, h))
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx C) D {
+			pad := Snap(gtx, cardPadX)
+			hLine(gtx, image.Rect(pad, h-Snap(gtx, 1), w-pad, h), colLineSoft)
+			return D{Size: image.Pt(w, h)}
+		}),
+		layout.Expanded(func(gtx C) D {
+			return layout.Inset{Left: cardPadX, Right: cardPadX}.Layout(gtx, func(gtx C) D {
+				kids := []layout.FlexChild{cardHeadTitle(o)}
+				if o.action != nil {
+					kids = append(kids,
+						layout.Flexed(1, func(gtx C) D { return D{} }),
+						layout.Rigid(func(gtx C) D {
+							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(o.action))
+						}),
+					)
+				}
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx, kids...)
+			})
+		}),
+	)
+}
+
+// cardHeadTitle 头部左组:可选图标胶囊 + 标题(副标题在其下方)。
+func cardHeadTitle(o cardOpt) layout.FlexChild {
+	return layout.Rigid(func(gtx C) D {
+		kids := make([]layout.FlexChild, 0, 3)
+		if o.icon != "" {
+			kids = append(kids,
+				layout.Rigid(func(gtx C) D { return iconChip(gtx, o.icon, colAccent) }),
+				layout.Rigid(hSpacer(sp10)),
+			)
+		}
+		texts := []layout.FlexChild{
+			layout.Rigid(func(gtx C) D {
+				return txt(gtx, o.title, textStyle{Size: fsBig, Col: colText, W: font.Medium})
+			}),
+		}
+		if o.sub != "" {
+			texts = append(texts,
+				layout.Rigid(vSpacer(2)),
+				layout.Rigid(func(gtx C) D {
+					return txt(gtx, o.sub, textStyle{Size: fsSmall, Col: colText3})
+				}),
+			)
+		}
+		kids = append(kids, layout.Rigid(func(gtx C) D {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, texts...)
+		}))
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, kids...)
 	})
 }
 
@@ -396,9 +389,6 @@ type cardOpt struct {
 func panel(gtx C, title string, body layout.Widget) D {
 	return card(gtx, cardOpt{title: title}, body)
 }
-
-// textH 13sp 文字行高。
-func textH(gtx C, sp float32) int { return gtx.Sp(unit.Sp(sp)) }
 
 // border 矩形描边(4 条细矩形,避免 stroke 路径开销)。
 func border(gtx C, r image.Rectangle, col color.NRGBA, wdp int) {
@@ -417,7 +407,7 @@ func border(gtx C, r image.Rectangle, col color.NRGBA, wdp int) {
 
 // drawTab 标签:选中态用青色 18% 底 + 青描边 + 青字(圆角胶囊),
 // 替代原来的斜切平行四边形——斜切在深色圆角体系里会显得突兀。
-func drawTab(gtx C, clk *widget.Clickable, txt string, active, small, yellow bool) D {
+func drawTab(gtx C, clk *widget.Clickable, s string, active, small, yellow bool) D {
 	padH, size := float32(sp16), float32(fsBody)
 	if small {
 		padH, size = float32(sp10), float32(fsBody2)
@@ -433,21 +423,28 @@ func drawTab(gtx C, clk *widget.Clickable, txt string, active, small, yellow boo
 		}
 	}
 	return clk.Layout(gtx, func(gtx C) D {
-		td, call := txtDims(gtx, txt, textStyle{Size: size, Col: col})
-		w := td.Size.X + 2*Snap(gtx, unit.Dp(padH))
-		h := Snap(gtx, ctlH)
-		r := image.Rect(0, 0, w, h)
-		rad := Snap(gtx, rChip)
-		switch {
-		case active:
-			fillRR(gtx, r, rad, alpha(col, 0x24))
-			strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x88), alpha(col, 0x24))
-		case clk.Hovered():
-			fillRR(gtx, r, rad, alpha(colText, 0x0A))
-			strokeRR(gtx, r, rad, Snap(gtx, 1), colLine, alpha(colText, 0x0A))
-		}
-		replayText(gtx, call, (w-td.Size.X)/2, (h-td.Size.Y)/2)
-		return D{Size: image.Pt(w, h)}
+		label := func(gtx C) D { return txt(gtx, s, textStyle{Size: size, Col: col}) }
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			// 底:宽度由标签层撑出,高度至少 ctlH(Expanded 层的 Min 即内容尺寸)
+			layout.Expanded(func(gtx C) D {
+				sz := gtx.Constraints.Min
+				sz.Y = maxI(sz.Y, Snap(gtx, ctlH))
+				r := image.Rect(0, 0, sz.X, sz.Y)
+				rad := Snap(gtx, rChip)
+				switch {
+				case active:
+					fillRR(gtx, r, rad, alpha(col, 0x24))
+					strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x88), alpha(col, 0x24))
+				case clk.Hovered():
+					fillRR(gtx, r, rad, alpha(colText, 0x0A))
+					strokeRR(gtx, r, rad, Snap(gtx, 1), colLine, alpha(colText, 0x0A))
+				}
+				return D{Size: sz}
+			}),
+			layout.Stacked(func(gtx C) D {
+				return layout.Inset{Left: unit.Dp(padH), Right: unit.Dp(padH), Top: sp6, Bottom: sp6}.Layout(gtx, label)
+			}),
+		)
 	})
 }
 
@@ -672,24 +669,39 @@ func (d *dropdown) layout(gtx C) D {
 			if d.sel >= 0 && d.sel < len(d.opts) {
 				s = d.opts[d.sel]
 			}
-			arrow := "▾"
-			if d.open {
-				arrow = "▴"
-			}
-			textD, call := txtDims(gtx, s, textStyle{Size: fsBody2, Col: colText})
-			arrowD, acall := txtDims(gtx, arrow, textStyle{Size: fsSmall, Col: colText3})
-			h := Snap(gtx, ctlH)
-			r := image.Rect(0, 0, w, h)
-			// 内嵌输入底 + 半透明描边;悬停时描边提亮
-			bd := colLine
-			if d.clk.Hovered() {
-				bd = colLineHi
-			}
-			fillRR(gtx, r, rad, bd)
-			fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), colSunken)
-			replayText(gtx, call, Snap(gtx, sp10), (h-textD.Size.Y)/2)
-			replayText(gtx, acall, w-arrowD.Size.X-Snap(gtx, sp8), (h-arrowD.Size.Y)/2)
-			return D{Size: image.Pt(w, h)}
+			hover := d.clk.Hovered()
+			return d.clk.Layout(gtx, func(gtx C) D {
+				h := Snap(gtx, ctlH)
+				gtx.Constraints = layout.Exact(image.Pt(w, h))
+				return layout.Stack{}.Layout(gtx,
+					layout.Expanded(func(gtx C) D {
+						r := image.Rect(0, 0, w, h)
+						bd := colLine
+						if hover {
+							bd = colLineHi
+						}
+						// 内嵌输入底 + 半透明描边;悬停时描边提亮
+						fillRR(gtx, r, rad, bd)
+						fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), colSunken)
+						return D{Size: image.Pt(w, h)}
+					}),
+					layout.Expanded(func(gtx C) D {
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D {
+								return layout.Inset{Left: sp10}.Layout(gtx, func(gtx C) D {
+									return txt(gtx, s, textStyle{Size: fsBody2, Col: colText, Lines: 1})
+								})
+							}),
+							layout.Flexed(1, func(gtx C) D { return D{} }),
+							layout.Rigid(func(gtx C) D {
+								return layout.Inset{Right: sp8}.Layout(gtx, func(gtx C) D {
+									return chevron(gtx, d.open, colText3)
+								})
+							}),
+						)
+					}),
+				)
+			})
 		}),
 		layout.Rigid(func(gtx C) D {
 			if !d.open || len(d.opts) == 0 {
@@ -699,7 +711,7 @@ func (d *dropdown) layout(gtx C) D {
 			if rows > 8 {
 				rows = 8
 			}
-			rowH := Snap(gtx, 30)
+			rowH := Snap(gtx, listRowH)
 			h := rowH * rows
 			r := image.Rect(0, 0, w, h)
 			fillRR(gtx, r, rad, colLine)
@@ -712,28 +724,51 @@ func (d *dropdown) layout(gtx C) D {
 					d.sel = i
 					d.open = false
 				}
+				bg := color.NRGBA{}
+				if hl {
+					bg = alpha(colAccent, 0x22)
+				} else if d.optClks[i].Hovered() {
+					bg = alpha(colText, 0x0A)
+				}
+				fg := colText
+				if hl {
+					fg = colAccent
+				}
 				return d.optClks[i].Layout(gtx, func(gtx C) D {
-					bg := color.NRGBA{}
-					if hl {
-						bg = alpha(colAccent, 0x22)
-					} else if d.optClks[i].Hovered() {
-						bg = alpha(colText, 0x0A)
-					}
-					rr := image.Rect(0, 0, w, rowH)
-					if bg.A != 0 {
-						fillRR(gtx, rr.Inset(Snap(gtx, 2)), rad-Snap(gtx, 2), bg)
-					}
-					fg := colText
-					if hl {
-						fg = colAccent
-					}
-					td, call := txtDims(gtx, d.opts[i], textStyle{Size: fsBody2, Col: fg})
-					replayText(gtx, call, Snap(gtx, sp10), (rowH-td.Size.Y)/2)
-					return D{Size: image.Pt(w, rowH)}
+					gtx.Constraints = layout.Exact(image.Pt(w, rowH))
+					return layout.Stack{}.Layout(gtx,
+						layout.Expanded(func(gtx C) D {
+							if bg.A != 0 {
+								fillRR(gtx, image.Rect(0, 0, w, rowH).Inset(Snap(gtx, 2)),
+									rad-Snap(gtx, 2), bg)
+							}
+							return D{Size: image.Pt(w, rowH)}
+						}),
+						layout.Expanded(func(gtx C) D {
+							return layout.Inset{Left: sp10, Right: sp10}.Layout(gtx, func(gtx C) D {
+								return txt(gtx, d.opts[i], textStyle{Size: fsBody2, Col: fg, Lines: 1})
+							})
+						}),
+					)
 				})
 			})
 			return D{Size: image.Pt(w, h)}
 		}))
+}
+
+// chevron 下拉箭头(上/下)。
+// 必须矢量画:▾ ▴ 这两个码位 Noto Sans SC 与微软雅黑都不收录(实测 cmap),
+// 用字形渲染时它们一直是空白。
+func chevron(gtx C, up bool, col color.NRGBA) D {
+	w := Snap(gtx, 8)
+	hh := Snap(gtx, 5)
+	half := float32(w) / 2
+	pts := []f32.Point{f32.Pt(0, float32(hh)), f32.Pt(half, 0), f32.Pt(float32(w), float32(hh))}
+	if !up {
+		pts = []f32.Point{f32.Pt(0, 0), f32.Pt(half, float32(hh)), f32.Pt(float32(w), 0)}
+	}
+	polyline(gtx, pts, float32(Snap(gtx, 1.2)), col, false)
+	return D{Size: image.Pt(w, hh)}
 }
 
 // ---------- 徽章 ----------
@@ -769,7 +804,7 @@ func (g *GUI) drawToast(gtx C) {
 	if g.toastS.msg == "" || !time.Now().Before(g.toastS.until) {
 		return
 	}
-	td, call := txtDims(gtx, g.toastS.msg, textStyle{Size: fsBody, Col: colText})
+	td := measureText(gtx, g.toastS.msg, textStyle{Size: fsBody, Col: colText})
 	padX, padY := Snap(gtx, sp16), Snap(gtx, sp10)
 	w := td.Size.X + 2*padX
 	h := td.Size.Y + 2*padY
@@ -780,7 +815,7 @@ func (g *GUI) drawToast(gtx C) {
 	softShadow(gtx, r, rad)
 	fillRR(gtx, r, rad, alpha(colAccent, 0x55))
 	fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), colHover)
-	replayText(gtx, call, x+padX, y+padY)
+	drawTextAt(gtx, x+padX, y+padY, g.toastS.msg, textStyle{Size: fsBody, Col: colText})
 }
 
 // ---------- 侧栏图标(矢量描边,对齐 Web 的内联 SVG) ----------
@@ -789,7 +824,7 @@ func (g *GUI) drawToast(gtx C) {
 var iconHoleBG *color.NRGBA
 
 // drawIconOn 在指定背景色上绘制图标(挖空色与之匹配,避免出现色块)。
-func drawIconOn(gtx C, name string, size int, c color.NRGBA, bg color.NRGBA) D {
+func drawIconOn(gtx C, name string, size unit.Dp, c color.NRGBA, bg color.NRGBA) D {
 	old := iconHoleBG
 	iconHoleBG = &bg
 	d := drawIcon(gtx, name, size, c)
@@ -797,9 +832,10 @@ func drawIconOn(gtx C, name string, size int, c color.NRGBA, bg color.NRGBA) D {
 	return d
 }
 
-// drawIcon 按名字绘制 size dp 的线性图标(24×24 视框)。
-func drawIcon(gtx C, name string, size int, c color.NRGBA) D {
-	s := float32(gtx.Dp(unit.Dp(size)))
+// drawIcon 按名字绘制 size 的逻辑尺寸线性图标(24×24 视框)。
+// 参数刻意用 unit.Dp 而不是 int:传设备像素会让图标在高缩放下不放大。
+func drawIcon(gtx C, name string, size unit.Dp, c color.NRGBA) D {
+	s := float32(gtx.Dp(size))
 	u := s / 24
 
 	line := func(pts ...[2]float32) {
@@ -889,14 +925,17 @@ func drawIcon(gtx C, name string, size int, c color.NRGBA) D {
 
 // ---------- 键值行 ----------
 
-// kvRow 一行键值(key 定宽弱色,value 主色):数值用次级文本,不抢标题的视觉权重。
+// kvRow 一行键值:键固定宽度、弱色;值用主色加粗 —— 卡片里真正要读的是值,
+// 之前键值同为 12sp/次级色,整块文字看上去一样重,扫读时抓不住重点。
 func kvRow(gtx C, k, v string) D {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Baseline}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(96))
+			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(112))
 			return txt(gtx, k, textStyle{Size: fsBody2, Col: colText3})
 		}),
-		layout.Rigid(func(gtx C) D { return txt(gtx, v, textStyle{Size: fsBody2, Col: colText2}) }),
+		layout.Rigid(func(gtx C) D {
+			return txt(gtx, v, textStyle{Size: fsBody, Col: colText, W: font.Medium})
+		}),
 	)
 }
 
@@ -904,7 +943,7 @@ func kvRow(gtx C, k, v string) D {
 func labelRow(gtx C, k string, w layout.Widget) D {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(96))
+			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(112))
 			return txt(gtx, k, textStyle{Size: fsBody2, Col: colText3})
 		}),
 		layout.Rigid(w),

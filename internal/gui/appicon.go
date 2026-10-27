@@ -16,6 +16,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 )
 
 var (
@@ -144,6 +145,14 @@ func drawAppIcon(gtx C, x, y, size int) {
 	paint.PaintOp{}.Add(gtx.Ops)
 	cl.Pop()
 	off.Pop()
+}
+
+// appIconWidget 应用图标的容器形态:尺寸按 Dp 取,位置交给外层 Flex/Stack,
+// 不再由调用方传绝对坐标(那样每个调用点都得自己算垂直居中)。
+func appIconWidget(gtx C, size unit.Dp) D {
+	s := Snap(gtx, size)
+	drawAppIcon(gtx, 0, 0, s)
+	return D{Size: image.Pt(s, s)}
 }
 
 // fillLine 画任意角度细线(标题栏关闭按钮的叉):

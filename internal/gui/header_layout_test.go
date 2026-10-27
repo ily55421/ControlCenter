@@ -26,9 +26,9 @@ func TestHeaderControlsNoOverlap(t *testing.T) {
 	_ = g.layoutHeader(gtx)
 
 	// 与 layoutHeader 内的排布保持一致
-	padR := Snap(gtx, headerPadR)
-	btnW := gtx.Dp(winBtnDp)
-	infoW := Snap(gtx, infoBtnDp)
+	padR := Snap(gtx, headerPad)
+	btnW := Snap(gtx, winBtnW)
+	infoW := Snap(gtx, infoBtnW)
 	gap := Snap(gtx, headerGap)
 
 	closeX := winW - padR - btnW

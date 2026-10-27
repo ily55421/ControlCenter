@@ -129,7 +129,8 @@ const (
 	btnDanger                 // 危险:红色实底
 )
 
-// button 自绘按钮:先录制内容测宽,再按 minW 画底,最后回放(避免二次布局)。
+// button 自绘按钮:内容(标签+内边距)撑出尺寸,底作为 Stack 的 Expanded 层铺满,
+// 文字由 Stack 的居中对齐摆放 —— 不再"录制一遍、偏移回放一遍"。
 func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool) D {
 	return clk.Layout(gtx, func(gtx C) D {
 		fg := colText
@@ -154,32 +155,33 @@ func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool)
 			bg, bd, fg = alpha(bg, 0x40), alpha(bd, 0x40), alpha(fg, 0x50)
 		}
 
-		m := op.Record(gtx.Ops)
-		td := txt(gtx, s, textStyle{Size: fsBody2, Col: fg})
-		call := m.Stop()
-
-		padH := gtx.Dp(unit.Dp(14))
-		minW := gtx.Dp(unit.Dp(72))
-		h := gtx.Dp(unit.Dp(btnH))
-		w := td.Size.X + 2*padH
-		if w < minW {
-			w = minW
-		}
-		r := image.Rect(0, 0, w, h)
 		rad := Snap(gtx, rCtl)
-		if bg.A != 0 {
-			fillRR(gtx, r, rad, bg)
-		}
-		if bd.A != 0 {
-			strokeRR(gtx, r, rad, Snap(gtx, 1), bd, bg)
-		}
-		if !disabled && clk.Pressed() {
-			fillRR(gtx, r, rad, alpha(colBg, 0x22))
-		}
-		off := op.Offset(image.Pt((w-td.Size.X)/2, (h-td.Size.Y)/2)).Push(gtx.Ops)
-		call.Add(gtx.Ops)
-		off.Pop()
-		return D{Size: image.Pt(w, h)}
+		pressed := !disabled && clk.Pressed()
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			// 底:尺寸取 Expanded 层的 Min 约束(= 标签+内边距撑出的内容尺寸)
+			layout.Expanded(func(gtx C) D {
+				sz := gtx.Constraints.Min
+				if min := gtx.Dp(unit.Dp(72)); sz.X < min {
+					sz.X = min
+				}
+				sz.Y = gtx.Dp(unit.Dp(btnH))
+				r := image.Rect(0, 0, sz.X, sz.Y)
+				if bg.A != 0 {
+					fillRR(gtx, r, rad, bg)
+				}
+				if bd.A != 0 {
+					strokeRR(gtx, r, rad, Snap(gtx, 1), bd, bg)
+				}
+				if pressed {
+					fillRR(gtx, r, rad, alpha(colBg, 0x22))
+				}
+				return D{Size: sz}
+			}),
+			layout.Stacked(func(gtx C) D {
+				return layout.Inset{Left: 14, Right: 14, Top: 4, Bottom: 4}.Layout(gtx,
+					func(gtx C) D { return txt(gtx, s, textStyle{Size: fsBody2, Col: fg}) })
+			}),
+		)
 	})
 }
 
@@ -187,20 +189,20 @@ func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool)
 
 // pillBadge 状态徽章:同色 12% 底 + 同色描边 + 小字。
 func pillBadge(gtx C, s string, col color.NRGBA) D {
-	m := op.Record(gtx.Ops)
-	td := txt(gtx, s, textStyle{Size: fsTiny, Col: col, W: font.Medium})
-	call := m.Stop()
-	padH := Snap(gtx, 8)
-	padV := Snap(gtx, 2)
-	w, h := td.Size.X+2*padH, td.Size.Y+2*padV
-	r := image.Rect(0, 0, w, h)
-	rad := h / 2
-	fillRR(gtx, r, rad, alpha(col, 0x1C))
-	strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x38), alpha(col, 0x1C))
-	off := op.Offset(image.Pt(padH, padV)).Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	off.Pop()
-	return D{Size: image.Pt(w, h)}
+	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+		layout.Expanded(func(gtx C) D {
+			sz := gtx.Constraints.Min
+			r := image.Rect(0, 0, sz.X, sz.Y)
+			rad := sz.Y / 2
+			fillRR(gtx, r, rad, alpha(col, 0x1C))
+			strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x38), alpha(col, 0x1C))
+			return D{Size: sz}
+		}),
+		layout.Stacked(func(gtx C) D {
+			return layout.Inset{Left: 8, Right: 8, Top: 2, Bottom: 2}.Layout(gtx,
+				func(gtx C) D { return txt(gtx, s, textStyle{Size: fsTiny, Col: col, W: font.Medium}) })
+		}),
+	)
 }
 
 // ---------- 分段 ----------
@@ -227,7 +229,6 @@ func (s *segmented) Layout(gtx C, labels []string) (D, int) {
 	fillRR(gtx, r, rad, colSunken)
 	strokeRR(gtx, r, rad, Snap(gtx, 1), colLine, colSunken)
 
-	segW := total / len(labels)
 	var kids []layout.FlexChild
 	for i := range labels {
 		i := i
@@ -239,20 +240,25 @@ func (s *segmented) Layout(gtx C, labels []string) (D, int) {
 			return s.clks[i].Layout(gtx, func(gtx C) D {
 				st := textStyle{Size: fsBody2, Col: colText3}
 				if i == s.sel {
-					rr := image.Rect(0, 0, segW, h).Inset(Snap(gtx, 2))
-					fillRR(gtx, rr, rad-Snap(gtx, 2), alpha(colAccent, 0x1C))
-					strokeRR(gtx, rr, rad-Snap(gtx, 2), Snap(gtx, 1), alpha(colAccent, 0x77), alpha(colAccent, 0x1C))
 					st = textStyle{Size: fsBody2, Col: colAccent, W: font.Medium}
 				} else if s.clks[i].Hovered() {
 					st.Col = colText
 				}
-				m := op.Record(gtx.Ops)
-				td := txt(gtx, labels[i], st)
-				call := m.Stop()
-				off := op.Offset(image.Pt((segW-td.Size.X)/2, (h-td.Size.Y)/2)).Push(gtx.Ops)
-				call.Add(gtx.Ops)
-				off.Pop()
-				return D{Size: image.Pt(segW, h)}
+				// 本段实际分到的宽度由 Flex 给(用 Min.X),不再用外层算出的 segW:
+				// 两者不一致时,选中底会宽过文字所在的那一段(实测"自动"段高亮超宽)。
+				return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+					layout.Expanded(func(gtx C) D {
+						sz := image.Pt(gtx.Constraints.Min.X, h)
+						if i == s.sel {
+							rr := image.Rect(0, 0, sz.X, sz.Y).Inset(Snap(gtx, 2))
+							fillRR(gtx, rr, rad-Snap(gtx, 2), alpha(colAccent, 0x1C))
+							strokeRR(gtx, rr, rad-Snap(gtx, 2), Snap(gtx, 1),
+								alpha(colAccent, 0x77), alpha(colAccent, 0x1C))
+						}
+						return D{Size: sz}
+					}),
+					layout.Stacked(func(gtx C) D { return txt(gtx, labels[i], st) }),
+				)
 			})
 		}))
 	}
@@ -344,22 +350,35 @@ func pageHead(gtx C, title, sub string, right layout.Widget) D {
 	})
 }
 
-// pageFooter 页脚信息条:收住页面底部,消灭"下半屏死黑",同时承载实时状态摘要。
+// pageFooter 页脚信息条:收住页面底部,同时承载实时状态摘要。
+// 左右两段用 SpaceBetween 分配,左段单行截断 —— 原先各自按绝对坐标画,
+// 左串一长就叠到右串上(实测底部出现两行字互相压字的乱码)。
 func pageFooter(gtx C, left, right string) D {
-	return layout.Inset{Top: unit.Dp(sp8)}.Layout(gtx, func(gtx C) D {
+	return layout.Inset{Top: sp8}.Layout(gtx, func(gtx C) D {
 		w := gtx.Constraints.Max.X
-		h := Snap(gtx, 30)
-		gtx.Constraints.Min.X = w
-		gtx.Constraints.Max = image.Pt(w, h)
-		fillRR(gtx, image.Rect(0, 0, w, h), Snap(gtx, rChip), alpha(colText, 0x06))
-		hLine(gtx, image.Rect(0, 0, w, 0), colLineSoft)
-		pad := Snap(gtx, sp12)
-		ld, lcall := txtDims(gtx, left, textStyle{Size: fsTiny, Col: colText4})
-		replayText(gtx, lcall, pad, (h-ld.Size.Y)/2)
-		if right != "" {
-			rd, rcall := txtDims(gtx, right, textStyle{Size: fsTiny, Col: colText4})
-			replayText(gtx, rcall, w-pad-rd.Size.X, (h-rd.Size.Y)/2)
-		}
-		return D{Size: image.Pt(w, h)}
+		h := Snap(gtx, footH)
+		gtx.Constraints = layout.Exact(image.Pt(w, h))
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx C) D {
+				fillRR(gtx, image.Rect(0, 0, w, h), Snap(gtx, rChip), alpha(colText, 0x06))
+				hLine(gtx, image.Rect(0, 0, w, 0), colLineSoft)
+				return D{Size: image.Pt(w, h)}
+			}),
+			layout.Expanded(func(gtx C) D {
+				return layout.Inset{Left: sp12, Right: sp12}.Layout(gtx, func(gtx C) D {
+					return layout.Flex{Alignment: layout.Middle, Spacing: layout.SpaceBetween}.Layout(gtx,
+						layout.Flexed(1, func(gtx C) D {
+							return txt(gtx, left, textStyle{Size: fsTiny, Col: colText4, Lines: 1})
+						}),
+						layout.Rigid(func(gtx C) D {
+							if right == "" {
+								return D{}
+							}
+							return txt(gtx, right, textStyle{Size: fsTiny, Col: colText4, Lines: 1})
+						}),
+					)
+				})
+			}),
+		)
 	})
 }

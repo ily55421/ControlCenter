@@ -9,7 +9,9 @@ import (
 	"image"
 	"image/color"
 
+	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -170,11 +172,28 @@ func txt(gtx C, s string, st textStyle) D {
 	return materialLabel(s, st).Layout(gtx)
 }
 
-// txtDims 只测文本尺寸,绘制 ops 留待回放(先底后字的层序靠它保证)。
-func txtDims(gtx C, s string, st textStyle) (D, op.CallOp) {
-	m := op.Record(gtx.Ops)
-	d := txt(gtx, s, st)
-	return d, m.Stop()
+// measureText 量一段文本的自然尺寸,**不**向当前帧落任何 op。
+// 用独立 scratch Ops 而不是 op.Record:录出的宏回放时会再叠一层当时的变换,
+// 画布类组件(表盘刻度标签、曲线图例)因此整体漂移过(实测)。
+func measureText(gtx C, s string, st textStyle) D {
+	var scratch op.Ops
+	gm := gtx
+	gm.Ops = &scratch
+	gm.Constraints = layout.Constraints{} // 无限约束 → 自然尺寸
+	return txt(gm, s, st)
+}
+
+// drawTextAt 在 (x,y) 处相对当前变换原位绘制文本。
+func drawTextAt(gtx C, x, y int, s string, st textStyle) {
+	defer op.Affine(f32.NewAffine2D(1, 0, float32(x), 0, 1, float32(y))).Push(gtx.Ops).Pop()
+	txt(gtx, s, st)
+}
+
+// centerTextAt 以 (cx,cy) 为中心绘制文本,返回量得的尺寸(几何定位的画布标签用)。
+func centerTextAt(gtx C, cx, cy float32, s string, st textStyle) D {
+	d := measureText(gtx, s, st)
+	drawTextAt(gtx, int(cx)-d.Size.X/2, int(cy)-d.Size.Y/2, s, st)
+	return d
 }
 
 // materialLabel 把 textStyle 转成带主题的文本样式。

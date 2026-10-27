@@ -10,13 +10,16 @@ import (
 	"gioui.org/unit"
 
 	"controlcenter/internal/cpuoc"
+	"controlcenter/internal/win32"
 )
 
-// 本文件把「默认窗口尺寸必须能完整展示每一页」固化成回归测试。
+// 本文件离屏测量每一页的自然高度,守住两件事:
+// 1) 页面不会因为约束传错而"高度失控"(实测暴涨 = 栅格退化或 Exact 传导 bug);
+// 2) 响应式断点(gridWideW)确实是真断点,窄一点内容就真的变高。
 //
-// 背景:defaultWindowSize 的高度依赖"最高一页内容的自然高度",而这个高度会随着
-// 页面布局改动变化。之前 contentMaxDp 是人工维护的常量,卡片/页头改完后忘了同步,
-// 于是默认窗口打开就出现滚动条。这里用假快照离屏测量真实高度,直接和常量对比。
+// 注意:这里不再拿实测值去对账某个"实测常量"。开窗时页面数据仍在异步加载,
+// 手抄的实测高度必然随每次布局改动漂移(历史上正是 contentMaxDp 反复失效的原因);
+// 默认高度改为按 tokens.go 的设计预算 pageBudget 推导,装不下就滚动。
 
 // fakeSnaps 给 GUI 注入一组有代表性的快照,让各页走真实布局而不是"正在加载"占位。
 func fakeSnaps() {
@@ -65,7 +68,7 @@ func fakeSnaps() {
 
 // contentWidthFor 返回给定窗口宽度下的页面内容宽度,与 scrolledPage 保持一致。
 func contentWidthFor(winW int) int {
-	return winW - navW - 2*pageSideDp - 12
+	return winW - navW - 2*pageSideW - scrollBarW
 }
 
 // measurePage 以给定内容宽度离屏测量一页的自然高度(Dp=px @1x)。
@@ -79,11 +82,10 @@ func measurePage(w layout.Widget, contentW int) int {
 	return w(gtx).Size.Y
 }
 
-// TestDefaultWindowFitsAllPages 默认窗口高度必须能完整展示每一页(含页边距与顶栏)。
-func TestDefaultWindowFitsAllPages(t *testing.T) {
-	fakeSnaps()
-	contentW := contentWidthFor(defaultWidthDp)
-
+// measurePagesAt 在给定窗口宽度下离屏量出全部页面高度。
+func measurePagesAt(t *testing.T, winW int) (maxH int, maxName string) {
+	t.Helper()
+	contentW := contentWidthFor(winW)
 	pages := []struct {
 		name string
 		w    layout.Widget
@@ -98,58 +100,55 @@ func TestDefaultWindowFitsAllPages(t *testing.T) {
 		{"节能计划", g.pageEnergy},
 		{"偏好", g.pagePref},
 	}
-	maxH, maxName := 0, ""
 	for _, p := range pages {
 		h := measurePage(p.w, contentW)
-		t.Logf("%-12s contentH = %d", p.name, h)
+		if h <= 0 {
+			t.Errorf("%s 量得高度 %d,页面被压扁或未布局(控件会直接消失)", p.name, h)
+		}
+		// 失控上限:栅格整体退化成单列也不该超过预算的两倍
+		if h > pageBudget*2 {
+			t.Errorf("%s 高度 %d 超过失控阈值 %d,多半是约束传导把内容撑爆(见 gui.go scrolledPage 注释)",
+				p.name, h, pageBudget*2)
+		}
 		if h > maxH {
 			maxH, maxName = h, p.name
 		}
+		t.Logf("%-12s contentH = %d", p.name, h)
 	}
+	return maxH, maxName
+}
 
-	// 1) contentMaxDp 必须与实际最高页一致(容差 8dp,留字体度量抖动)
-	if diff := maxH - contentMaxDp; diff > 8 || diff < -8 {
-		t.Errorf("contentMaxDp=%d 与实测最高页(%s)=%d 不符,请同步 contentMaxDp",
-			contentMaxDp, maxName, maxH)
-	}
+// TestPageHeightsAgainstBudget 量出各页真实高度,并说明默认窗口是否装得下最高页。
+// 装不下不是错误(规范允许滚动),这里只保证"量得到、不失控、说得清"。
+func TestPageHeightsAgainstBudget(t *testing.T) {
+	fakeSnaps()
+	maxH, maxName := measurePagesAt(t, defWinW)
 
-	// 2) 默认窗口高度必须 >= 顶栏+型号栏+页边距+最高页内容
-	need := windowHeightFor(maxH)
 	_, h := defaultWindowSize()
-	t.Logf("默认窗口高度=%d,完整展示需要=%d", h, need)
-	if h < need {
-		// 只有屏幕装不下时才会被夹小,此时必须已退化为滚动
-		t.Logf("默认高度被屏幕工作区限制(%d < %d),该页将出现滚动条", h, need)
+	need := windowHeightFor(maxH)
+	aw, ah := win32.PrimaryWorkAreaDp()
+	if h >= need {
+		t.Logf("默认窗口高 %d ≥ 最高页(%s)所需 %d:开窗无滚动", h, maxName, need)
+	} else {
+		t.Logf("默认窗口高 %d < 最高页(%s)所需 %d:该页滚动显示(工作区 %dx%d Dp)", h, maxName, need, aw, ah)
+	}
+	if maxH <= 0 {
+		t.Fatal("未量到任何页面高度")
 	}
 }
 
 // TestWideEnoughForTwoColumns 默认宽度必须让子栅格保持并排(否则内容高度暴涨)。
 func TestWideEnoughForTwoColumns(t *testing.T) {
-	if defaultWidthDp < wideMinDp {
-		t.Fatalf("默认宽度 %d < 并排阈值 %d,子栅格会退化为单列", defaultWidthDp, wideMinDp)
+	if defWinW < gridWideW {
+		t.Fatalf("默认宽度 %d < 并排阈值 %d,子栅格会退化为单列", defWinW, gridWideW)
 	}
 	// 阈值上/下的真实高度应显著不同(证明这个阈值确实有意义)
 	fakeSnaps()
-	narrow := measurePage(g.pageSystem, contentWidthFor(wideMinDp-200))
-	wide := measurePage(g.pageSystem, contentWidthFor(wideMinDp))
+	narrow := measurePage(g.pageSystem, contentWidthFor(gridWideW-200))
+	wide := measurePage(g.pageSystem, contentWidthFor(gridWideW))
 	t.Logf("窄窗(系统页)=%d  宽窗(系统页)=%d", narrow, wide)
 	if narrow <= wide {
 		t.Errorf("窗口变窄后系统页高度(%d)未超过宽窗(%d),阈值 %d 可能已失效",
-			narrow, wide, wideMinDp)
-	}
-}
-
-// TestContentHeightAtMatches 估算函数必须与实际测量一致,不能低估。
-func TestContentHeightAtMatches(t *testing.T) {
-	fakeSnaps()
-	for _, w := range []int{1000, 1240, 1320, 1400} {
-		got := contentHeightAt(w)
-		actual := measurePage(g.pageSystem, contentWidthFor(w))
-		if got < actual {
-			t.Errorf("win=%d: contentHeightAt=%d 低于实测 %d(会算出过矮的窗口)", w, got, actual)
-		}
-	}
-	if got := contentHeightAt(defaultWidthDp); got != contentMaxDp {
-		t.Errorf("宽窗口下 contentHeightAt=%d,期望 %d", got, contentMaxDp)
+			narrow, wide, gridWideW)
 	}
 }

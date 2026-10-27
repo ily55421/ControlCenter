@@ -137,19 +137,19 @@ func (b *Backend) RequestMode(m int) { go b.pm.Change(appsettings.ModeType(m)) }
 
 // ModeOptions 模式附属开关状态。
 type ModeOptions struct {
-	TurboFan, Noiseless, DTT, LowRefresh          bool
-	LowRefreshSupport                             bool
-	BlueLight                                     int
+	TurboFan, Noiseless, DTT, LowRefresh bool
+	LowRefreshSupport                    bool
+	BlueLight                            int
 }
 
 func (b *Backend) ModeOptions() ModeOptions {
 	return ModeOptions{
-		TurboFan:           b.as.ReadU8(appsettings.AddrTurboFan) == 1,
-		Noiseless:          b.as.ReadU8(appsettings.AddrNoiselessFan) == 1,
-		DTT:                b.as.ReadU8(appsettings.AddrDTT) == 1,
-		LowRefresh:         b.as.ReadU8(appsettings.AddrLowRefreshOn) == 1,
-		LowRefreshSupport:  b.as.ReadU8(appsettings.AddrLowRefreshSup) == 1,
-		BlueLight:          int(b.as.ReadU8(appsettings.AddrBlueLight)),
+		TurboFan:          b.as.ReadU8(appsettings.AddrTurboFan) == 1,
+		Noiseless:         b.as.ReadU8(appsettings.AddrNoiselessFan) == 1,
+		DTT:               b.as.ReadU8(appsettings.AddrDTT) == 1,
+		LowRefresh:        b.as.ReadU8(appsettings.AddrLowRefreshOn) == 1,
+		LowRefreshSupport: b.as.ReadU8(appsettings.AddrLowRefreshSup) == 1,
+		BlueLight:         int(b.as.ReadU8(appsettings.AddrBlueLight)),
 	}
 }
 
@@ -196,12 +196,12 @@ func (b *Backend) SetModeOption(key string, value bool) {
 // Pref 偏好汇总。
 type Pref struct {
 	FlexiCharger struct {
-		Enabled         bool
-		Start, Stop     int
-		Mode            int
+		Enabled     bool
+		Start, Stop int
+		Mode        int
 	}
 	Keyboard struct {
-		FnLock, WinKey, FnWin    bool
+		FnLock, WinKey, FnWin        bool
 		FnLockVisible, WinKeyVisible bool
 	}
 	GPUSwitch struct{ Current, Support int }
@@ -361,10 +361,10 @@ func (b *Backend) ResetFanTables() { _ = b.fc.LoadDefaultTable() }
 
 // AntiDustOut 除尘状态。
 type AntiDustOut struct {
-	Enabled      bool
-	Days, Hour   int
-	Resume       bool
-	Running      bool
+	Enabled    bool
+	Days, Hour int
+	Resume     bool
+	Running    bool
 }
 
 func (b *Backend) AntiDust() AntiDustOut {
@@ -372,7 +372,7 @@ func (b *Backend) AntiDust() AntiDustOut {
 	return AntiDustOut{Enabled: en, Days: days, Resume: resume, Hour: hour, Running: b.fc.AntiDustStatus() != 0}
 }
 
-func (b *Backend) RunAntiDust()                        { _ = b.fc.RunAntiDust() }
+func (b *Backend) RunAntiDust() { _ = b.fc.RunAntiDust() }
 func (b *Backend) SetAntiDustSchedule(days, hour int, resume bool) {
 	_ = b.fc.SetAntiDustScheduler(days, resume, hour)
 }
@@ -381,14 +381,14 @@ func (b *Backend) SetAntiDustSchedule(days, hour int, resume bool) {
 
 // KBStateOut 键盘灯状态。
 type KBStateOut struct {
-	Type         keyboard.KBType
-	On           bool
-	Brightness   int
-	Mode, Speed  int
+	Type                                                                         keyboard.KBType
+	On                                                                           bool
+	Brightness                                                                   int
+	Mode, Speed                                                                  int
 	AllColor, LeftColor, MidColor, RightColor, TpColor, LogoColor, LightBarColor keyboard.Color
-	SleepTrigger bool
-	SleepSeconds int
-	OverrideBoot int
+	SleepTrigger                                                                 bool
+	SleepSeconds                                                                 int
+	OverrideBoot                                                                 int
 }
 
 func (b *Backend) KBState() KBStateOut {
@@ -400,13 +400,13 @@ func (b *Backend) KBState() KBStateOut {
 		return keyboard.Color{R: int(pg[off]), G: int(pg[off+1]), B: int(pg[off+2])}
 	}
 	return KBStateOut{
-		Type:         b.platformInfo().kbType,
-		On:           appsettings.U8(pg, 80) == 1,
-		Brightness:   appsettings.U8(pg, 35),
-		Mode:         appsettings.U8(pg, 32),
-		Speed:        appsettings.U8(pg, 34),
-		AllColor:     at(81), LeftColor: at(85), MidColor: at(89), RightColor: at(93),
-		TpColor:      at(97), LogoColor: at(101), LightBarColor: at(105),
+		Type:       b.platformInfo().kbType,
+		On:         appsettings.U8(pg, 80) == 1,
+		Brightness: appsettings.U8(pg, 35),
+		Mode:       appsettings.U8(pg, 32),
+		Speed:      appsettings.U8(pg, 34),
+		AllColor:   at(81), LeftColor: at(85), MidColor: at(89), RightColor: at(93),
+		TpColor: at(97), LogoColor: at(101), LightBarColor: at(105),
 		SleepTrigger: appsettings.U8(pg, 36) == 1,
 		SleepSeconds: appsettings.U16(pg, 37),
 		OverrideBoot: appsettings.U8(pg, 7),
@@ -415,12 +415,12 @@ func (b *Backend) KBState() KBStateOut {
 
 // KBRequest 键盘灯命令(原 POST /api/kb/cmd)。
 type KBRequest struct {
-	Cmd                    string // onoff|brightness|color|effect|sleep|override|reset
-	Part                   string // all|left|mid|right|tp|logo|lightbar
-	R, G, B                int
-	Level, Effect          int
-	Mode, Seconds          int
-	Override               *int
+	Cmd           string // onoff|brightness|color|effect|sleep|override|reset
+	Part          string // all|left|mid|right|tp|logo|lightbar
+	R, G, B       int
+	Level, Effect int
+	Mode, Seconds int
+	Override      *int
 }
 
 func (b *Backend) KBCmd(req KBRequest) error {
@@ -550,10 +550,10 @@ func (b *Backend) CPURestoreDefaults() error {
 // BatteryOut 电池信息。
 type BatteryOut struct {
 	CycleCount, FullCharge, Design, CapacityPct, StopThresh, Status, Date int
-	AgeYears                                                             float64
-	Health                                                               string
-	HealthCode                                                           int
-	Ongoing                                                              int
+	AgeYears                                                              float64
+	Health                                                                string
+	HealthCode                                                            int
+	Ongoing                                                               int
 }
 
 func (b *Backend) Battery() BatteryOut {
@@ -599,8 +599,8 @@ func (b *Backend) BatteryRefresh(action string) {
 
 // EnergySampleOut 实时功耗采样。
 type EnergySampleOut struct {
-	Watt, BatWh, PD                  float64
-	ChargeLimit, DischargeLimit      int
+	Watt, BatWh, PD             float64
+	ChargeLimit, DischargeLimit int
 }
 
 func (b *Backend) EnergySample() EnergySampleOut {
@@ -625,9 +625,9 @@ func (b *Backend) EnergyApply(p energysave.Profile) error {
 
 // FKProfile FlexiKey 配置档。
 type FKProfile struct {
-	Name            string
+	Name                string
 	Selected, KB, Mouse bool
-	Slots           int
+	Slots               int
 }
 
 // FlexikeyOut FlexiKey 状态。

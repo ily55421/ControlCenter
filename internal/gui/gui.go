@@ -188,6 +188,20 @@ func (a *animVal) tick(target float32) float32 {
 	return a.cur
 }
 
+// txtDims 录制一次文本绘制并返回其尺寸,供同一帧内按坐标回放。
+// 用于"先量后放"的居中排版:避免为定位再 shaping 一遍。
+func txtDims(gtx C, s string, st textStyle) (D, op.CallOp) {
+	macro := op.Record(gtx.Ops)
+	d := txt(gtx, s, st)
+	return d, macro.Stop()
+}
+
+// replayText 在 (x, y) 回放 txtDims 录制的文本。
+func replayText(gtx C, call op.CallOp, x, y int) {
+	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+}
+
 func absF(v float32) float32 {
 	if v < 0 {
 		return -v
@@ -195,90 +209,35 @@ func absF(v float32) float32 {
 	return v
 }
 
-// Run 运行原生 GUI 直到窗口关闭(或收到退出命令)。
-// 主窗口默认尺寸计算所需的布局常量(单位 Dp,与 layoutPage/layoutHeader/layoutModeline 一致)。
-const (
-	shellHeaderDp   = 46 // 顶栏
-	shellModelineDp = 26 // 型号栏
-	pageTopDp       = 12 // layoutPage 上边距
-	pageBottomDp    = 46 // layoutPage 下边距
-	pageSideDp      = 20 // layoutPage 左右边距(仅宽度用)
-	pageScrollDp    = 12 // scrolledPage 右缘滚动条占位
-
-	// 默认窗口宽度:窗口宽度 >= 1320 时右侧"资讯/偏好"子栅格才真正并排。
-	// 实测(内容宽 = 窗口宽 - 侧栏 200 - 边距 40 - 滚动条 12):
-	//   窗口 1000 → 系统页 1815 高 | 1160 → 1308 | 1240 → 1308 | 1320 → 1020 | 1400 → 1006
-	// 也就是说窄窗会让子栅格退化,整页高度暴涨,默认高度跟着顶穿屏幕工作区。
-	defaultWidthDp = 1400
-
-	// 各页内容自然高度实测(Dp @100% 缩放,不含页边距),按 defaultWidthDp 测得:
-	// 系统 1006 / LED 1057 / FlexiKey 468 / Charger 520 / CPU 754 /
-	// GPU 383 / 电池 276 / 节能 407 / 偏好 375。取最高一页。
-	// 内容布局变化时必须重新测量并同步此值
-	// (由 layout_measure_test.go 的 TestDefaultWindowFitsAllPages 守门)。
-	contentMaxDp = 1057
-
-	// 子栅格开始并排的窗口宽度阈值,以及退化后的高度上限(实测值)。
-	wideMinDp  = 1320
-	narrowMaxH = 1815
-)
-
-// windowHeightFor 返回完整展示最高一页所需的窗口客户区高度(Dp)。
+// windowHeightFor 返回完整展示 contentDp 高内容所需的窗口客户区高度(Dp)。
 func windowHeightFor(contentDp int) int {
-	return shellHeaderDp + shellModelineDp + pageTopDp + pageBottomDp + contentDp
+	return shellHdrH + modelineH + pageTopH + pageBotH + contentDp
 }
 
-// defaultWindowSize 返回默认窗口客户区尺寸(Dp):
-// 宽度用 defaultWidthDp(双列布局在此宽度下才真正并排),
-// 高度按"最高一页内容 + 页边距 + 顶栏 + 型号栏"精确计算,
-// 并夹在屏幕工作区内:屏幕装不下时退化为滚动,而不是把底栏顶出屏幕。
+// defaultWindowSize 返回默认窗口客户区尺寸(Dp):宽度用 defWinW
+// (双列子栅格在此宽度才真正并排),高度按 pageBudget 的内容预算计算,
+// 并夹在屏幕工作区内 —— 装不下时由 scrolledPage 启用滚动,
+// 而不是把底栏顶出屏幕。
 func defaultWindowSize() (w, h int) {
-	w = defaultWidthDp
-	h = windowHeightFor(contentMaxDp)
+	w, h = defWinW, windowHeightFor(pageBudget)
 
-	// 屏幕工作区是物理像素,窗口尺寸按 Dp 计,需换算后比较
-	sw, sh := win32.PrimaryWorkArea()
-	if sw <= 0 || sh <= 0 {
+	aw, ah := win32.PrimaryWorkAreaDp() // 已是 Dp,与 gioui 的 PxPerDp 同一量纲
+	if aw <= 0 || ah <= 0 {
 		return w, h
 	}
-	scale := win32.DpiScale()
-	maxWDp := int(float64(sw)/scale) - 8 // 留一点余量给窗口边框/阴影
-	maxHDp := int(float64(sh)/scale) - 8
-
-	if w > maxWDp {
-		if maxWDp >= 1000 {
-			w = maxWDp
-		} else {
-			w = 1000 // 不低于 MinSize 宽度
+	if maxW := aw - winEdgeW; w > maxW {
+		w = maxW
+		if w < minWinW {
+			w = minWinW // 不低于 MinSize 宽度
 		}
 	}
-	// 宽度收窄后双列会退化、内容变高,用收窄后的宽度重算所需高度
-	if w < defaultWidthDp {
-		if need := windowHeightFor(contentHeightAt(w)); need > h {
-			h = need
-		}
+	if maxH := ah - winEdgeW; h > maxH {
+		h = maxH
 	}
-	if h > maxHDp {
-		h = maxHDp
-	}
-	minH := windowHeightFor(0) + 200 // 不低于一个可用的最小高度
-	if minH < 660 {
-		minH = 660
-	}
-	if h < minH {
-		h = minH
+	if h < minWinH {
+		h = minWinH
 	}
 	return w, h
-}
-
-// contentHeightAt 返回给定窗口宽度下最高一页的内容高度(Dp)。
-// 窗口宽度 >= wideMinDp 时用实测常量;更窄时子栅格退化,高度按实测上限估算,
-// 保证"算出来的默认窗口高度不会比实际内容矮"。
-func contentHeightAt(w int) int {
-	if w >= wideMinDp {
-		return contentMaxDp
-	}
-	return narrowMaxH
 }
 
 // Run 运行原生 GUI 直到窗口关闭(或收到退出命令)。
@@ -717,7 +676,6 @@ func colorSafe(r, gg, b uint8) color.NRGBA {
 const (
 	winBtnDp   = 36 // 最小化/最大化/关闭按钮宽
 	infoBtnDp  = 32 // 信息按钮宽
-	headerGap  = 8  // 控件之间的间距
 	headerPadR = 4  // 右侧留白
 )
 
@@ -736,11 +694,11 @@ func (g *GUI) layoutHeader(gtx C) D {
 	infoW := Snap(gtx, infoBtnDp)
 	padR := Snap(gtx, headerPadR)
 	gap := Snap(gtx, headerGap)
-	closeX := w - padR - btnW            // 最右:关闭
-	maxX := closeX - btnW                // 最大化
-	minX := maxX - btnW                  // 最小化
-	infoX := minX - gap - infoW          // 信息按钮在三枚窗口按钮左侧
-	controlsX := infoX                   // 右侧控件区起点
+	closeX := w - padR - btnW   // 最右:关闭
+	maxX := closeX - btnW       // 最大化
+	minX := maxX - btnW         // 最小化
+	infoX := minX - gap - infoW // 信息按钮在三枚窗口按钮左侧
+	controlsX := infoX          // 右侧控件区起点
 	infoTop := (h - Snap(gtx, sp20) - Snap(gtx, sp6)) / 2
 
 	// ---- 拖动区:只铺到右侧控件左边,避免盖住按钮的点击 ----
@@ -899,6 +857,7 @@ type scrollState struct {
 	offset   float32
 	contentH int
 	viewH    int
+	natH     int // 上一帧的内容自然高度(不含垂直分布插入的空隙)
 }
 
 var (
@@ -924,6 +883,10 @@ func (g *GUI) scrolledPage(gtx C, page int, content layout.Widget) D {
 	innerW := viewW - barSpace
 	if innerW < gtx.Dp(160) {
 		innerW = viewW
+	}
+	// 内容最大宽度:超宽窗口下内容左对齐、不把小卡片无限拉宽(方案 3.1)。
+	if maxW := gtx.Dp(contentMaxW); innerW > maxW {
+		innerW = maxW
 	}
 	// 统一的内容约束:宽度锁满(panel 靠 Exact 宽度铺满,原来由 layoutPage 的 Min.X 保证)、
 	// 高度下限放开,让内容按自然高度排布
@@ -954,13 +917,24 @@ func (g *GUI) scrolledPage(gtx C, page int, content layout.Widget) D {
 		}
 	}
 	off := int(sc.offset)
+	// 页面垂直余量:按上一帧的"自然高度"算。插入的空隙不计入自然高度,
+	// 否则每帧余量都会变化,页面会上下抖动。
+	pageSlack, pageSlackUsed = 0, 0
+	if sc.natH > 0 && sc.natH < viewH {
+		pageSlack = viewH - sc.natH
+	}
 	offStack := op.Offset(image.Pt(0, -off)).Push(gtx.Ops)
 	d := content(bodyGtx(gtx))
 	offStack.Pop()
 	clipStack.Pop()
 
-	// 用本帧实测高度更新滚动范围
+	// 用本帧实测高度更新滚动范围;自然高度 = 实测高 - 本帧插入的空隙。
+	// 容差 1px:两列等高差 1px 时不要让余量在 735/736 之间来回翻,否则每帧都重绘。
 	sc.contentH, sc.viewH = d.Size.Y, viewH
+	if nat := d.Size.Y - pageSlackUsed; sc.natH == 0 || absI(nat-sc.natH) > 1 {
+		sc.natH = nat
+		g.win.Invalidate() // 自然高度变了,下一帧重算余量
+	}
 	maxOff := curMax()
 	if sc.offset > maxOff {
 		sc.offset = maxOff
@@ -1025,33 +999,152 @@ func (g *GUI) scrolledPage(gtx C, page int, content layout.Widget) D {
 }
 
 // grid2 双列栅格(窄窗自动变单列),权重 wl:wr。
+//
+// 两列之间必须显式插入 gap:先前只从列宽里扣掉 gap 却没有放占位子项,
+// 宽度虽然守恒,但两列内容直接贴在一起 —— 卡片圆角/描边重叠。
+// 这里列宽 = 扣 gap 后按权重分配,中间插入 gap 占位,保证 lw + gap + rw == 可用宽。
 func grid2(gtx C, wl, wr float32, l, r layout.Widget) D {
+	return grid2MinY(gtx, wl, wr, 0, l, r)
+}
+
+// grid2MinY grid2 的实现:minY > 0 时两列的最小高度都设为该值(卡片撑满页面用),
+// minY == 0 时高度交还自然布局(Exact 会把巨大 Min.Y 传导给末位子项,曾致面板拉伸/行丢失)。
+func grid2MinY(gtx C, wl, wr float32, minY int, l, r layout.Widget) D {
 	w := gtx.Constraints.Max.X
-	gap := gtx.Dp(16)
-	if w < gtx.Dp(900) {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(l), layout.Rigid(vSpacer(14)), layout.Rigid(r))
+	gap := gtx.Dp(gridGap)
+	if wl <= 0 || wr <= 0 {
+		wl, wr = 1, 1
 	}
 	lw := int(float32(w-gap) * wl / (wl + wr))
 	rw := w - gap - lw
+	// 列宽不足最小可用宽度时提前回退单列,而不是把卡片压到放不下内容。
+	if w < gtx.Dp(gridPairW) || lw < gtx.Dp(halfMinW) || rw < gtx.Dp(halfMinW) {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(l), layout.Rigid(vSpacer(gridGap)), layout.Rigid(r))
+	}
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints.Min.X = lw
 			gtx.Constraints.Max.X = lw
-			gtx.Constraints.Min.Y = 0 // 高度交还自然布局(Exact 会把巨大 Min.Y 传导给末位子项,曾致面板拉伸/行丢失)
+			gtx.Constraints.Min.Y = minY
 			return l(gtx)
 		}),
+		layout.Rigid(hSpacerSP(gap)),
 		layout.Rigid(func(gtx C) D {
 			gtx.Constraints.Min.X = rw
 			gtx.Constraints.Max.X = rw
-			gtx.Constraints.Min.Y = 0
+			gtx.Constraints.Min.Y = minY
 			return r(gtx)
 		}),
 	)
 }
 
+// grid2Fill 双列栅格的"填充"版本:页面有垂直余量时,把两列都撑到同一目标高度
+// (自然高较大者 + 余量),列内的卡片跟着长高 —— 短页面不再在上半屏就结束。
+// 余量按"实际增长"记账,避免逐帧漂移。
+func grid2Fill(gtx C, wl, wr float32, l, r layout.Widget) D {
+	if pageSlack <= 0 {
+		return grid2(gtx, wl, wr, l, r)
+	}
+	measure := func(w layout.Widget) int {
+		return w(gtx.Disabled()).Size.Y // 测量不消费事件,避免点击被算两次
+	}
+	base := maxI(measure(l), measure(r))
+	d := grid2MinY(gtx, wl, wr, base+pageSlack, l, r)
+	if extra := d.Size.Y - base; extra > 0 {
+		pageSlackUsed += extra
+	}
+	return d
+}
+
+// colFill 纵向堆叠的"填充"版本:把 slack 均分给这一列的每张卡
+// (最小高度 = 自然高 + 均分额)。它不做余量记账 —— 多列并排时由页面统一记一次,
+// 否则两列各记一遍会让"自然高度"逐帧漂移,页面上下抖。
+func colFill(gtx C, slack int, items ...layout.Widget) D {
+	if slack <= 0 || len(items) == 0 {
+		return col(gtx, items...)
+	}
+	nats := make([]int, len(items))
+	for i, it := range items {
+		nats[i] = it(gtx.Disabled()).Size.Y
+	}
+	per := slack / len(items)
+	kids := make([]layout.FlexChild, 0, len(items))
+	for i, it := range items {
+		i, it := i, it
+		kids = append(kids, layout.Rigid(func(gtx C) D {
+			gtx.Constraints.Min.Y = nats[i] + per
+			gtx.Constraints.Max.Y = math.MaxInt32 / 2
+			return it(gtx)
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, kids...)
+}
+
+// fillPair 双列 + 每列多卡的填充:两列都按同一余量撑高,页面只增高一次,
+// 因此余量只记一次账(见 colFill 注释)。
+func fillPair(gtx C, l, r layout.Widget) D {
+	slack := pageSlack
+	d := grid2(gtx, 1, 1, l, r)
+	if slack > 0 {
+		pageSlackUsed += slack
+	}
+	return d
+}
+
+// absI 整数绝对值(高度比较用)。
+func absI(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// hSpacerSP 像素级横向占位(已由调用方按 Dp 折算)。
 func hSpacerSP(n int) layout.Widget {
 	return func(gtx C) D { return D{Size: image.Pt(n, 0)} }
+}
+
+// 页面垂直分布:短页面在可视高度里只占上半屏,下半屏全黑。
+// scrolledPage 每帧把「视口高 - 内容自然高」写进 pageSlack;
+// 页面根用 spreadCol 把余量均分到各段之间,双列主体用 grid2Fill 让卡片撑高。
+var (
+	pageSlack     int // 本帧可用余量(px)
+	pageSlackUsed int // 本帧实际插入/撑高的余量(px)
+)
+
+// spreadMaxDp 单段最多分到的余量。
+const spreadMaxDp = 96
+
+// vSpacerPx 像素级纵向占位(余量是像素量,不能再按 dp 折算一次)。
+func vSpacerPx(h int) layout.Widget {
+	return func(gtx C) D { return D{Size: image.Pt(0, h)} }
+}
+
+// spreadCol 页面根的纵向堆叠:内容比视口矮时,把余量均分到各段之间
+// (单段上限 spreadMaxDp)。页头仍贴顶 —— 整页下移居中会让标题悬在中间。
+func spreadCol(gtx C, items ...layout.Widget) D {
+	pageSlackUsed = 0
+	if pageSlack <= 0 || len(items) < 2 {
+		return col(gtx, items...)
+	}
+	per := pageSlack / (len(items) - 1)
+	if maxPer := gtx.Dp(spreadMaxDp); per > maxPer {
+		per = maxPer
+	}
+	if per <= 0 {
+		return col(gtx, items...)
+	}
+	kids := make([]layout.FlexChild, 0, len(items)*2)
+	for i, it := range items {
+		it := it
+		if i > 0 {
+			kids = append(kids, layout.Rigid(vSpacerPx(per)))
+			pageSlackUsed += per
+		}
+		kids = append(kids, layout.Rigid(it))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, kids...)
 }
 
 func orDash(s string) string {

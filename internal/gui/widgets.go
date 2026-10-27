@@ -119,7 +119,8 @@ var langNames = []string{
 func (g *GUI) initWidgets() {
 	w := &g.w
 	w.kbGrid.SelR, w.kbGrid.SelC = -1, -1
-	w.kbGrid.Tag = &w.kbGrid // event.Tag 必须非 nil
+	w.kbGrid.Tag = &w.kbGrid                 // event.Tag 必须非 nil
+	w.kbGrid.ScrollTag = &w.kbGrid.ScrollTag // 滚轮与点击必须是两个 tag,否则滚轮会被当成按下
 	w.fanOffset = newSlider(0, 100, false, func(v int) {
 		g.run("偏移已下发", -1, 0, func() error { g.be.SetFanOffset(v); return nil })
 	})

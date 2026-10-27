@@ -75,7 +75,7 @@ func TestCardRenders(t *testing.T) {
 			icon:  "system",
 		}, func(gtx C) D {
 			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx C) D {
-				return label(gtx, "内容区域", 13, pal.Txt)
+				return txt(gtx, "内容区域", textStyle{Size: fsBody, Col: colText})
 			})
 		})
 	})

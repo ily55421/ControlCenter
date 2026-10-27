@@ -29,7 +29,9 @@ func onoff(b bool) string {
 func (g *GUI) pageSystem(gtx C) D {
 	s := g.sys.Load()
 	if s == nil {
-		return panel(gtx, "正在连接", func(gtx C) D { return label(gtx, "正在连接 ACPI 桥驱动…", 14, pal.Dim) })
+		return panel(gtx, "正在连接", func(gtx C) D {
+			return txt(gtx, "正在连接 ACPI 桥驱动…", textStyle{Size: fsBig, Col: colText3})
+		})
 	}
 	live := g.live.Load()
 
@@ -100,7 +102,7 @@ func (g *GUI) pageSystem(gtx C) D {
 
 	// ----- 布局 -----
 	// 页头(标题层级) → 模式标签 → 双列内容 → 页脚信息条(收口,消灭底部死黑)
-	return col(gtx,
+	return spreadCol(gtx,
 		func(gtx C) D {
 			return pageHead(gtx, "系统监控", "实时利用率 / 温度 / 风扇转速与模式切换", func(gtx C) D {
 				return pillBadge(gtx, modeNames[s.st.Mode], colAccent)
@@ -179,7 +181,7 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 				return func(gtx C) D {
 					return layout.Flex{Axis: layout.Vertical, Alignment: align}.Layout(gtx,
 						layout.Rigid(func(gtx C) D { return bigNum(gtx, num, numSize) }),
-						layout.Rigid(func(gtx C) D { return label(gtx, lbl, 12, pal.Dim) }),
+						layout.Rigid(func(gtx C) D { return txt(gtx, lbl, textStyle{Size: fsBody2, Col: colText3}) }),
 					)
 				}
 			}
@@ -225,34 +227,16 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 		},
 		vSpacer(4),
 		func(gtx C) D {
-			return centerLabel(gtx, fmt.Sprintf("风扇转速控制 · WMI 121/1 + 偏移 %d%%", s.fanCfg.Offset))
+			return centerLabel(gtx, fmt.Sprintf("风扇转速控制 · 当前偏移 %d%%", s.fanCfg.Offset))
 		},
 		vSpacer(8),
 		// 风扇控制面板
 		func(gtx C) D {
 			return panel(gtx, "风扇转速控制", func(gtx C) D {
-				var curveCols []layout.FlexChild
-				names := [3]string{"CPU", "GPU1", "GPU2"}
-				for i := 0; i < 3; i++ {
-					i := i
-					// 每列锁定 186dp:列内 centerLabel 返回全宽,会把横向 Flex
-					// 剩余空间吃光,第 2/3 列拿到 Max.X=0 而整体消失(实测)。
-					curveCols = append(curveCols, layout.Rigid(func(gtx C) D {
-						gtx.Constraints.Min.X = gtx.Dp(186)
-						gtx.Constraints.Max.X = gtx.Dp(186)
-						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D { return label(gtx, names[i]+" 曲线", 12, pal.Dim) }),
-							layout.Rigid(vSpacer(4)),
-							layout.Rigid(func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) }),
-							layout.Rigid(vSpacer(2)),
-							layout.Rigid(func(gtx C) D { return label(gtx, "温度℃ / 转速% · 拖拽圆点", 11, pal.Dim) }),
-						)
-					}))
-				}
 				return col(gtx,
 					func(gtx C) D {
 						return labelRow(gtx, "自动偏移", func(gtx C) D {
-							return label(gtx, fmt.Sprintf("%d%%", g.w.fanOffset.value()), 14, pal.Lime)
+							return txt(gtx, fmt.Sprintf("%d%%", g.w.fanOffset.value()), textStyle{Size: fsBig, Col: colOk})
 						})
 					},
 					func(gtx C) D { return g.w.fanOffset.layout(gtx) },
@@ -270,25 +254,23 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 							hSpacer(12),
 							func(gtx C) D { return actBtn(gtx, &g.w.dustApply, "下发除尘计划", btnPlain, false) },
 							hSpacer(12),
-							func(gtx C) D { return label(gtx, badgeTxt, 12, pal.Dim) },
+							func(gtx C) D { return txt(gtx, badgeTxt, textStyle{Size: fsBody2, Col: colText3}) },
 						)
 					},
 					func(gtx C) D {
 						return row(gtx,
-							func(gtx C) D { return label(gtx, "周期(天)", 12, pal.Dim) },
+							func(gtx C) D { return txt(gtx, "周期(天)", textStyle{Size: fsBody2, Col: colText3}) },
 							func(gtx C) D { g.w.dustDays.sync(gtx, s.ad.Days); return numBox(gtx, &g.w.dustDays, 64) },
 							hSpacer(10),
-							func(gtx C) D { return label(gtx, "执行(时)", 12, pal.Dim) },
+							func(gtx C) D { return txt(gtx, "执行(时)", textStyle{Size: fsBody2, Col: colText3}) },
 							func(gtx C) D { g.w.dustHour.sync(gtx, s.ad.Hour); return numBox(gtx, &g.w.dustHour, 64) },
 							hSpacer(10),
 							func(gtx C) D { return switchBox(gtx, &g.w.dustResume) },
-							func(gtx C) D { return label(gtx, "唤醒补跑", 12, pal.Dim) },
+							func(gtx C) D { return txt(gtx, "唤醒补跑", textStyle{Size: fsBody2, Col: colText3}) },
 						)
 					},
 					vSpacer(10),
-					func(gtx C) D {
-						return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx, curveCols...)
-					},
+					func(gtx C) D { return g.curveRow(gtx, s, fanTemps) },
 					vSpacer(10),
 					func(gtx C) D {
 						return row(gtx,
@@ -300,6 +282,56 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 			})
 		},
 	)
+}
+
+// curveRow 三张风扇曲线按可用宽度自适应列数:3 列 → 2 列 → 1 列。
+// 原先固定并排三列各 186dp,可用宽度不足时第三列被挤出或压扁,
+// 拖拽点与"温度/转速"标注不可辨认(P0)。
+func (g *GUI) curveRow(gtx C, s *sysSnap, fanTemps [3]int) D {
+	names := [3]string{"CPU", "GPU1", "GPU2"}
+	colW, gapW := gtx.Dp(curveColW), gtx.Dp(sp10)
+	avail := gtx.Constraints.Max.X
+	cols := 1
+	switch {
+	case avail >= 3*colW+2*gapW:
+		cols = 3
+	case avail >= 2*colW+gapW:
+		cols = 2
+	}
+	var rows []layout.Widget
+	for start := 0; start < 3; start += cols {
+		end := start + cols
+		if end > 3 {
+			end = 3
+		}
+		start, end := start, end
+		rows = append(rows, func(gtx C) D {
+			kids := make([]layout.FlexChild, 0, end-start)
+			for i := start; i < end; i++ {
+				i := i
+				// 列的宽度必须锁死:列内的 txt 会吃掉 Flex 剩余空间,
+				// 导致后续列拿到 Max.X=0 而整体消失(实测)。
+				kids = append(kids, layout.Rigid(func(gtx C) D {
+					gtx.Constraints.Min.X = colW
+					gtx.Constraints.Max.X = colW
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx C) D {
+							return txt(gtx, names[i]+" 曲线", textStyle{Size: fsBody2, Col: colText3})
+						}),
+						layout.Rigid(vSpacer(4)),
+						layout.Rigid(func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) }),
+						layout.Rigid(vSpacer(2)),
+						layout.Rigid(func(gtx C) D {
+							return txt(gtx, "温度℃ / 转速% · 拖拽圆点", textStyle{Size: fsSmall, Col: colText3})
+						}),
+					)
+				}))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx, kids...)
+		})
+		rows = append(rows, vSpacer(sp8))
+	}
+	return col(gtx, rows...)
 }
 
 // curveEditor 单风扇可视化三点曲线编辑器(拖拽圆点调整;数值落回 curveEd,
@@ -320,7 +352,11 @@ func (g *GUI) curveEditor(gtx C, i int, s *sysSnap, curTemp int) D {
 		{maxI(ed[1].value(), 35), ed[4].value()},
 		{maxI(ed[2].value(), 35), ed[5].value()},
 	}
-	w, h := gtx.Dp(158), gtx.Dp(112)
+	w, h := gtx.Dp(curveColW-sp16-12), gtx.Dp(112)
+	// 列比预期窄时按可用宽度收缩:绘制、命中与返回尺寸必须同一个 w
+	if m := gtx.Constraints.Max.X; m > 0 && m < w {
+		w = m
+	}
 	dragIdx := -1
 	if g.curveDragFan == i {
 		dragIdx = g.curveDragPt
@@ -431,9 +467,9 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 						}),
 						layout.Rigid(func(gtx C) D {
 							if rpm == 0 && temp == 0 {
-								return label(gtx, name+" 无数据", 11, pal.Dim)
+								return txt(gtx, name+" 无数据", textStyle{Size: fsSmall, Col: colText3})
 							}
-							return label(gtx, fmt.Sprintf("%s %d RPM·%d℃", name, rpm, temp), 11, pal.Dim)
+							return txt(gtx, fmt.Sprintf("%s %d RPM·%d℃", name, rpm, temp), textStyle{Size: fsSmall, Col: colText3})
 						}),
 					)
 				}
@@ -456,7 +492,9 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 						return badge(gtx, "独显已断电", "warn")
 					},
 					vSpacer(4),
-					func(gtx C) D { return label(gtx, "安静模式下 EC 不上报独显数据", 11, pal.Dim) },
+					func(gtx C) D {
+						return txt(gtx, "安静模式下 EC 不上报独显数据", textStyle{Size: fsSmall, Col: colText3})
+					},
 					vSpacer(4),
 					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },
 				)
@@ -508,16 +546,18 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 			}
 			return col(gtx,
 				func(gtx C) D {
-					return row(gtx, func(gtx C) D { return label(gtx, "蓝光", 12, pal.Dim) },
+					return row(gtx, func(gtx C) D { return txt(gtx, "蓝光", textStyle{Size: fsBody2, Col: colText3}) },
 						hSpacer(6),
-						func(gtx C) D { return label(gtx, fmt.Sprintf("%d/10", g.w.blSlider.value()), 13, pal.Lime) })
+						func(gtx C) D {
+							return txt(gtx, fmt.Sprintf("%d/10", g.w.blSlider.value()), textStyle{Size: fsBody, Col: colOk})
+						})
 				},
 				func(gtx C) D { return g.w.blSlider.layout(gtx) },
 				vSpacer(6),
 				func(gtx C) D {
 					return col(gtx,
 						func(gtx C) D {
-							return row(gtx, func(gtx C) D { return label(gtx, "GPU 模式", 12, pal.Dim) },
+							return row(gtx, func(gtx C) D { return txt(gtx, "GPU 模式", textStyle{Size: fsBody2, Col: colText3}) },
 								hSpacer(6), func(gtx C) D { return badge(gtx, gn, "") })
 						},
 						vSpacer(4),
@@ -547,7 +587,7 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 						})
 					},
 					func(gtx C) D {
-						return label(gtx, fmt.Sprintf("当前频率 %d MHz · 每秒采样,最近 1 分钟", cpuMHz), 11, pal.Dim)
+						return txt(gtx, fmt.Sprintf("当前频率 %d MHz · 每秒采样,最近 1 分钟", cpuMHz), textStyle{Size: fsSmall, Col: colText3})
 					})
 			})
 		},
@@ -605,7 +645,7 @@ func (g *GUI) tile(gtx C, clk *widget.Clickable, ico, lbl string, on bool) D {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D { return drawIcon(gtx, ico, 30, colr) }),
 				layout.Rigid(vSpacer(4)),
-				layout.Rigid(func(gtx C) D { return label(gtx, lbl, 11, colr) }),
+				layout.Rigid(func(gtx C) D { return txt(gtx, lbl, textStyle{Size: fsSmall, Col: colr}) }),
 			)
 		})
 	})
@@ -613,8 +653,8 @@ func (g *GUI) tile(gtx C, clk *widget.Clickable, ico, lbl string, on bool) D {
 
 // ---------- 通用小助手 ----------
 
-func bigNum(gtx C, txt string, size float32) D {
-	return label(gtx, txt, size, pal.Txt)
+func bigNum(gtx C, s string, size float32) D {
+	return txt(gtx, s, textStyle{Size: size, Col: colText})
 }
 
 func pctOrDash(v float32) string {
@@ -631,14 +671,36 @@ func numOrDash(v int) string {
 	return fmt.Sprintf("%d", v)
 }
 
-func centerLabel(gtx C, txt string) D {
-	td, call := textDims(gtx, txt, 13, pal.Dim)
-	replayText(gtx, call, (gtx.Constraints.Max.X-td.Size.X)/2, 0)
-	return D{Size: image.Pt(gtx.Constraints.Max.X, td.Size.Y)}
+// mAhOrDash 容量(mAh):0 表示未取到,显示占位符而不是假读数。
+func mAhOrDash(v int) string {
+	if v <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d mAh", v)
 }
 
-func rightLabel(gtx C, txt string) D {
-	td, call := textDims(gtx, txt, 13, pal.Dim)
-	replayText(gtx, call, gtx.Constraints.Max.X-td.Size.X, 0)
-	return D{Size: image.Pt(gtx.Constraints.Max.X, td.Size.Y)}
+// yearsOrDash 使用年限:未取到时不显示 0.0 年。
+func yearsOrDash(v float64) string {
+	if v <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f 年", v)
+}
+
+// centerLabel 单行居中的说明小字:宽度锁满,由 Flex 居中,不再测量后回放。
+func centerLabel(gtx C, s string) D {
+	if w := gtx.Constraints.Max.X; w > 0 {
+		gtx.Constraints.Min.X = w
+	}
+	return layout.Flex{Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return txt(gtx, s, textStyle{Size: fsBody, Col: colText3}) }))
+}
+
+// rightLabel 单行右对齐的说明小字。
+func rightLabel(gtx C, s string) D {
+	if w := gtx.Constraints.Max.X; w > 0 {
+		gtx.Constraints.Min.X = w
+	}
+	return layout.Flex{Alignment: layout.Middle, Spacing: layout.SpaceEnd}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return txt(gtx, s, textStyle{Size: fsBody, Col: colText3}) }))
 }

@@ -2,12 +2,16 @@
 // (小屏/高缩放下不至于让底栏跑出屏幕,也不盲目撑满)。
 package win32
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 var (
-	procMonitorFromPoint = moduser32.NewProc("MonitorFromPoint")
-	procGetMonitorInfo   = moduser32.NewProc("GetMonitorInfoW")
-	procGetDpiForSystem  = moduser32.NewProc("GetDpiForSystem")
+	procMonitorFromPoint             = moduser32.NewProc("MonitorFromPoint")
+	procGetMonitorInfo               = moduser32.NewProc("GetMonitorInfoW")
+	procGetDpiForSystem              = moduser32.NewProc("GetDpiForSystem")
+	procSetThreadDpiAwarenessContext = moduser32.NewProc("SetThreadDpiAwarenessContext")
 )
 
 const (
@@ -15,6 +19,8 @@ const (
 	defaultDpi              = 96
 	smCxScreen              = 0
 	smCyScreen              = 1
+	// dpiAwarePerMonitorV2 = (DPI_AWARENESS_CONTEXT)-4
+	dpiAwarePerMonitorV2 = ^uintptr(3)
 )
 
 // monitorInfo MONITORINFO(仅使用 rcWork;与 Win32 布局一致:cbSize 后两个 RECT 再 DWORD)。
@@ -46,11 +52,25 @@ func PrimaryWorkArea() (w, h int) {
 	return int(int32(cx)), int(int32(cy))
 }
 
-// DpiScale 返回系统 DPI 缩放系数(96 DPI = 1.0);
-// GetDpiForSystem 不可用(Win10 1607 以下)时按 1.0 处理。
-func DpiScale() float64 {
-	if r, _, _ := procGetDpiForSystem.Call(); r > 0 {
-		return float64(r) / defaultDpi
+// PrimaryWorkAreaDp 返回主显示器工作区尺寸,单位是与 gioui 同量纲的 Dp(逻辑像素)。
+//
+// 查询线程临时切到 Per-Monitor V2 感知:不感知的线程拿到的是 DPI **虚拟化后**的像素,
+// 再除以系统 DPI 就是二次缩放 —— 单屏等比缩放时两者恰好抵消(所以长期没被发现),
+// 混合 DPI 或线程一旦改为感知,默认窗口尺寸立刻偏一个缩放系数。
+func PrimaryWorkAreaDp() (w, h int) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	prev, _, _ := procSetThreadDpiAwarenessContext.Call(dpiAwarePerMonitorV2)
+	defer procSetThreadDpiAwarenessContext.Call(prev)
+
+	pw, ph := PrimaryWorkArea()
+	if pw <= 0 || ph <= 0 {
+		return 0, 0
 	}
-	return 1
+	dpi, _, _ := procGetDpiForSystem.Call()
+	if dpi <= 0 { // Win10 1607 以下:GetDpiForSystem 不可用,按 1.0 处理
+		dpi = defaultDpi
+	}
+	return pw * defaultDpi / int(dpi), ph * defaultDpi / int(dpi)
 }
