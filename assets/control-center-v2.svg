@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Control Center</title>
+  <desc id="desc">A cyan C-shaped gauge, a pale cyan northeast pointer and a short green progress arc on a rounded dark graphite tile with a transparent exterior.</desc>
+  <rect x="96" y="96" width="832" height="832" rx="192" fill="#121E2B"/>
+  <path d="M 688.650480 708.190234 A 264 264 0 1 1 688.650480 315.809766" fill="none" stroke="#06C9E7" stroke-width="96" stroke-linecap="round"/>
+  <path d="M 303.965161 349.465371 A 264 264 0 0 1 413.103859 267.223462" fill="none" stroke="#42E69C" stroke-width="96" stroke-linecap="round"/>
+  <polygon points="478,478 648,376 546,546" fill="#C6F7FB"/>
+  <circle cx="512" cy="512" r="48" fill="#C6F7FB"/>
+</svg>

@@ -8,7 +8,6 @@ import (
 	"image/color"
 	draw "image/draw"
 	"math"
-	"os"
 	"sync"
 	"unicode/utf8"
 
@@ -181,14 +180,6 @@ func colorWheel(gtx C, sizeDp int, zoneName, hex string, selAngle *float64) D {
 	cx, cy := float32(s)/2, float32(s)/2
 	outer := float32(s) / 2
 	inner := outer * 0.57
-	// 柔光晕:外圈 6 段宽弧,低透明度(替代 CSS blur)
-	haloCols := []color.NRGBA{pal.Red, pal.Yellow, pal.Lime, pal.Cyan, pal.Blue, color.NRGBA{R: 0xFF, G: 0x00, B: 0xFF, A: 0xFF}}
-	for i, hc := range haloCols {
-		a0 := float64(i) * math.Pi / 3
-		a1 := a0 + math.Pi/3
-		pts := arcPts(cx, cy, outer*1.18, a0, a1, 10)
-		polyline(gtx, pts, px(gtx, 10), alpha(hc, 0x28), false)
-	}
 	// 纯色环
 	const step = 1.0
 	for deg := 0; deg < 360; deg += int(step) {
@@ -228,7 +219,7 @@ func arcPts(cx, cy, r float32, a0, a1 float64, n int) []f32.Point {
 	return pts
 }
 
-// wheelAngle 点击坐标 → 色相角(0..2π,顶部为 0,顺时针)。
+// wheelAngle 与绘制共用右侧为 0、顺时针的色相角。
 // 返回 false 表示点击不在环带上。
 func wheelAngle(s int, x, y int) (float64, bool) {
 	cx, cy := float64(s)/2, float64(s)/2
@@ -239,7 +230,7 @@ func wheelAngle(s int, x, y int) (float64, bool) {
 	if r < inner || r > outer {
 		return 0, false
 	}
-	ang := math.Atan2(dy, dx) + math.Pi/2
+	ang := math.Atan2(dy, dx)
 	for ang < 0 {
 		ang += 2 * math.Pi
 	}
@@ -382,10 +373,12 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 				g.win.Invalidate()
 			}
 		}
-		// 滚轮:横向滚动(Shift+滚轮给 Scroll.X,普通滚轮给 Scroll.Y)
+		// 只消费横向滚动,普通滚轮留给页面。
+		grid.off = clamp(grid.off, 0, float32(gm.maxOff()))
 		event.Op(gtx.Ops, grid.ScrollTag)
 		for {
-			ev, ok := gtx.Event(pointer.Filter{Target: grid.ScrollTag, Kinds: pointer.Scroll})
+			ev, ok := gtx.Event(pointer.Filter{Target: grid.ScrollTag, Kinds: pointer.Scroll,
+				ScrollX: scrollRange(grid.off, float32(gm.maxOff()))})
 			if !ok {
 				break
 			}
@@ -393,12 +386,8 @@ func kbLayout(gtx C, zoneColors *[3]color.NRGBA, grid *KBGrid, onTap func(r, c i
 			if !ok || pe.Kind != pointer.Scroll {
 				continue
 			}
-			d := pe.Scroll.X
-			if d == 0 {
-				d = pe.Scroll.Y
-			}
-			if d != 0 && gm.maxOff() > 0 {
-				grid.off = clamp(grid.off-d*0.5, 0, float32(gm.maxOff()))
+			if pe.Scroll.X != 0 && gm.maxOff() > 0 {
+				grid.off = clamp(grid.off+pe.Scroll.X, 0, float32(gm.maxOff()))
 				g.win.Invalidate()
 			}
 		}
@@ -511,14 +500,24 @@ func renderKeyboardImage(gm kbGeom, selKey int, zoneColors *[3]color.NRGBA) *ima
 			draw.Draw(img, image.Rect(rect.Min.X, rect.Max.Y-1, rect.Max.X, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
 			draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Min.X+1, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
 			draw.Draw(img, image.Rect(rect.Max.X-1, rect.Min.Y, rect.Max.X, rect.Max.Y), &image.Uniform{borderCol}, image.Point{}, draw.Src)
-			// 标签
-			if k.label != "" {
-				w := utf8.RuneCountInString(k.label) * 7
+			label := k.label
+			switch label {
+			case "↵":
+				label = "Enter"
+			case "←":
+				label = "<"
+			case "↓":
+				label = "v"
+			case "→":
+				label = ">"
+			}
+			if label != "" {
+				w := utf8.RuneCountInString(label) * 7
 				tx := rect.Min.X + (rect.Dx()-w)/2
 				ty := rect.Min.Y + (rect.Dy()-13)/2
 				fd := font.Drawer{Dst: img, Src: image.White, Face: basicfont.Face7x13}
 				fd.Dot = fixed.P(tx, ty+11)
-				fd.DrawString(k.label)
+				fd.DrawString(label)
 			}
 		}
 	}
@@ -693,70 +692,87 @@ func drawMultiChart(gtx C, hDp int, series []chartSeries) D {
 
 // ---------- 风扇曲线编辑器(可视化拖拽,超越原版的数字框) ----------
 
-// curvePad 编辑器内边距(dp)。
-const curvePad = 10
+// curvePad 右侧留白(dp);其余边距额外预留坐标刻度和轴标题。
+const curvePad = 14
 
-// curveXY 温度/占空(35..100℃ × 0..100%)→ 画布坐标。
+func curveBounds(gtx C, w, h int) image.Rectangle {
+	left := min(gtx.Dp(44), maxI(w-2, 0))
+	top := min(gtx.Dp(24), maxI(h-2, 0))
+	return image.Rect(left, top, maxI(left+1, w-gtx.Dp(curvePad)), maxI(top+1, h-gtx.Dp(40)))
+}
+
+// curveXY 真实温度/占空(0..100℃ × 0..100%)→ 画布坐标。
 func curveXY(gtx C, w, h int, t, d int) f32.Point {
-	p := gtx.Dp(unit.Dp(curvePad))
-	x := float32(p) + float32(t-35)/65*float32(w-2*p)
-	y := float32(h-p) - float32(d)/100*float32(h-2*p)
+	r := curveBounds(gtx, w, h)
+	x := float32(r.Min.X) + float32(t)/100*float32(r.Dx())
+	y := float32(r.Max.Y) - float32(d)/100*float32(r.Dy())
 	return f32.Pt(x, y)
 }
 
-// curveTD 画布坐标 → 温度/占空(四舍五入并夹紧到合法域)。
+// curveTD 与绘图共用边界;图外拖拽夹紧,避免小尺寸时除零。
 func curveTD(gtx C, w, h int, x, y float32) (t, d int) {
-	p := float32(gtx.Dp(curvePad))
-	t = 35 + int((x-p)/float32(w-2*gtx.Dp(curvePad))*65+0.5)
-	d = int((float32(h)-p-y)/float32(h-2*gtx.Dp(curvePad))*100 + 0.5)
-	t = clampI(t, 35, 100)
-	d = clampI(d, 0, 100)
-	return
+	r := curveBounds(gtx, w, h)
+	t = int(math.Round(float64((x - float32(r.Min.X)) / float32(r.Dx()) * 100)))
+	d = int(math.Round(float64((float32(r.Max.Y) - y) / float32(r.Dy()) * 100)))
+	return clampI(t, 0, 100), clampI(d, 0, 100)
 }
 
-// drawFanCurve 单风扇三点曲线编辑区(只画;拖拽交互在 page_system 处理)。
-// pts 为三点 (T,D);dragIdx 当前拖拽点(-1 无)。
-func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx, curTemp int) D {
-	// 背景网格:温度 50/65/80/95 竖线,占空 25/50/75 横线
-	gridCol := color.NRGBA{R: 0x15, G: 0x1A, B: 0x1E, A: 0xFF}
-	pad := gtx.Dp(curvePad)
-	for t := 50; t <= 95; t += 15 {
-		x := int(curveXY(gtx, w, h, t, 0).X)
-		fillArea(gtx, image.Rect(x, pad, x+1, h-pad), gridCol)
-	}
-	for d := 25; d <= 75; d += 25 {
-		y := int(curveXY(gtx, w, h, 35, d).Y)
-		fillArea(gtx, image.Rect(pad, y, w-pad, y+1), gridCol)
-	}
-	// 曲线:左沿 → 三点 → (100,100)
-	pp := make([]f32.Point, 0, 5)
-	pp = append(pp, f32.Pt(float32(pad), curveXY(gtx, w, h, pts[0][0], pts[0][1]).Y))
+// curvePath 与工作点插值共用端点:0℃保持 D1,100℃达到100%。
+func curvePath(gtx C, w, h int, pts [3][2]int) []f32.Point {
+	pp := []f32.Point{curveXY(gtx, w, h, 0, pts[0][1])}
 	for _, p := range pts {
 		pp = append(pp, curveXY(gtx, w, h, p[0], p[1]))
 	}
-	pp = append(pp, f32.Pt(float32(w-pad), float32(h-pad)))
+	return append(pp, curveXY(gtx, w, h, 100, 100))
+}
+
+// curveDuty 保留插值小数,使工作点准确落在渲染线段上。
+func curveDuty(pts [3][2]int, t int) float32 {
+	if t >= 100 {
+		return 100
+	}
+	prev := [2]int{0, pts[0][1]}
+	for _, next := range append(pts[:], [2]int{100, 100}) {
+		if t <= next[0] {
+			if next[0] == prev[0] {
+				return float32(next[1])
+			}
+			return float32(prev[1]) + float32(next[1]-prev[1])*float32(t-prev[0])/float32(next[0]-prev[0])
+		}
+		prev = next
+	}
+	return 100
+}
+
+// drawFanCurve 仅绘图;数值在图外逐行展示,不会与密集圆点重叠。
+func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx, curTemp int) D {
+	r := curveBounds(gtx, w, h)
+	gridCol := color.NRGBA{R: 0x25, G: 0x2E, B: 0x36, A: 0xFF}
+	st := textStyle{Size: fsSmall, Col: colText3}
+	for v := 0; v <= 100; v += 25 {
+		p := curveXY(gtx, w, h, v, v)
+		x, y := int(p.X), int(p.Y)
+		fillArea(gtx, image.Rect(x, r.Min.Y, x+1, r.Max.Y), gridCol)
+		fillArea(gtx, image.Rect(r.Min.X, y, r.Max.X, y+1), gridCol)
+		label := fmt.Sprintf("%d", v)
+		td := measureText(gtx, label, st)
+		drawTextAt(gtx, r.Min.X-gtx.Dp(8)-td.Size.X, y-td.Size.Y/2, label, st)
+		drawTextAt(gtx, clampI(x-td.Size.X/2, 0, maxI(w-td.Size.X, 0)), r.Max.Y+gtx.Dp(6), label, st)
+	}
+	drawTextAt(gtx, r.Min.X, 0, "占空 (%)", st)
+	centerTextAt(gtx, float32(r.Min.X+r.Max.X)/2, float32(h-gtx.Dp(8)), "温度 (℃)", st)
+	pp := curvePath(gtx, w, h, pts)
 	polyline(gtx, pp, px(gtx, 4), alpha(pal.Cyan, 0x30), false)
 	polyline(gtx, pp, px(gtx, 1.5), pal.Cyan, false)
-	// 当前温度叠加:温度竖线(黄)+ 曲线上的工作点(风扇调参所见即所得)
 	if curTemp > 0 {
-		ct := clampI(curTemp, 35, 100)
-		// 按三点曲线规则求当前占空:分段线性,两端夹紧
-		d := pts[0][1]
-		switch {
-		case ct >= pts[2][0]:
-			d = pts[2][1]
-		case ct >= pts[1][0]:
-			d = interp(ct, pts[1][0], pts[1][1], pts[2][0], pts[2][1])
-		case ct >= pts[0][0]:
-			d = interp(ct, pts[0][0], pts[0][1], pts[1][0], pts[1][1])
-		}
-		cx := int(curveXY(gtx, w, h, ct, d).X)
-		fillArea(gtx, image.Rect(cx, pad, cx+1, h-pad), alpha(pal.Yellow, 0x45))
-		wp := curveXY(gtx, w, h, ct, d)
+		ct := clampI(curTemp, 0, 100)
+		wp := curveXY(gtx, w, h, ct, 0)
+		wp.Y -= curveDuty(pts, ct) / 100 * float32(r.Dy())
+		cx := int(wp.X)
+		fillArea(gtx, image.Rect(cx, r.Min.Y, cx+1, r.Max.Y), alpha(pal.Yellow, 0x45))
 		fillCircle(gtx, wp.X, wp.Y, px(gtx, 6), alpha(pal.Yellow, 0x35))
 		fillCircle(gtx, wp.X, wp.Y, px(gtx, 3), pal.Yellow)
 	}
-	// 拖拽点:辉光圆 + 白芯;拖拽中放大
 	for i, p := range pts {
 		c := curveXY(gtx, w, h, p[0], p[1])
 		r := px(gtx, 4.5)
@@ -766,13 +782,6 @@ func drawFanCurve(gtx C, w, h int, pts [3][2]int, dragIdx, curTemp int) D {
 		fillCircle(gtx, c.X, c.Y, r+px(gtx, 3), alpha(pal.Cyan, 0x35))
 		fillCircle(gtx, c.X, c.Y, r, pal.Cyan)
 		fillCircle(gtx, c.X, c.Y, r*0.45, color.NRGBA{R: 0x00, G: 0x16, B: 0x1C, A: 0xFF})
-		// 点位标签(温度,占空),贴点下方
-		lbl := fmt.Sprintf("%d,%d%%", p[0], p[1])
-		st := textStyle{Size: fsTiny, Col: colText3}
-		td := measureText(gtx, lbl, st)
-		lx := clampI(int(c.X)-td.Size.X/2, 2, w-td.Size.X-2)
-		ly := clampI(int(c.Y)+gtx.Dp(6), 0, h-td.Size.Y)
-		drawTextAt(gtx, lx, ly, lbl, st)
 	}
 	return D{Size: image.Pt(w, h)}
 }
@@ -783,13 +792,4 @@ func interp(x, x0, y0, x1, y1 int) int {
 		return y0
 	}
 	return y0 + (y1-y0)*(x-x0)/(x1-x0)
-}
-
-func dbgLog(v ...any) {
-	f, err := os.OpenFile(`D:\code\ControlCenter\bin\dbg.txt`, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	fmt.Fprintln(f, v...)
-	f.Close()
 }

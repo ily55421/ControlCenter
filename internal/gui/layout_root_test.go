@@ -30,3 +30,40 @@ func TestLayoutRootRepeatsFrames(t *testing.T) {
 		t.Fatalf("页面被意外切换")
 	}
 }
+
+func TestPagesAtViewportAndScale(t *testing.T) {
+	previous, previousScroll := g, pageScroll
+	g = nil
+	t.Cleanup(func() { g, pageScroll = previous, previousScroll })
+	fakeSnaps()
+	for _, tc := range []struct {
+		size  image.Point
+		scale float32
+	}{
+		{image.Pt(1000, 560), 1},
+		{image.Pt(1250, 700), 1.25},
+		{image.Pt(2800, 1800), 2},
+	} {
+		for _, collapsed := range []bool{false, true} {
+			g.sideMin = collapsed
+			for page := 0; page < pgCount; page++ {
+				g.page = page
+				pageScroll[page] = scrollState{}
+				var ops op.Ops
+				for range 2 {
+					ops.Reset()
+					gtx := layout.Context{
+						Ops: &ops, Constraints: layout.Exact(tc.size),
+						Metric: unit.Metric{PxPerDp: tc.scale, PxPerSp: tc.scale},
+					}
+					if got := g.layoutRoot(gtx).Size; got != tc.size {
+						t.Fatalf("page=%d scale=%v collapsed=%v: root=%v, want=%v", page, tc.scale, collapsed, got, tc.size)
+					}
+				}
+				if sc := pageScroll[page]; sc.contentH <= 0 || sc.viewH <= 0 || sc.viewH >= tc.size.Y {
+					t.Fatalf("page=%d scale=%v collapsed=%v: invalid viewport %+v", page, tc.scale, collapsed, sc)
+				}
+			}
+		}
+	}
+}

@@ -25,13 +25,17 @@ import (
 	"controlcenter/internal/wmi"
 )
 
+type modeChanger interface {
+	Change(appsettings.ModeType) error
+}
+
 // Backend 全部功能面板的后端。字段与原 ui.Server 一致,方法语义与原 JSON API 一致。
 type Backend struct {
 	w  *wmi.Client
 	as *appsettings.Store
 	kb *keyboard.Controller
 	fc *fan.Controller
-	pm *powermode.Engine
+	pm modeChanger
 
 	GPUOCBase string // ControlGPU.exe 所在目录
 	bootStamp string
@@ -130,8 +134,9 @@ func (b *Backend) Status() Status {
 	}
 }
 
-// RequestMode 请求切换电源模式(后台执行,与原 POST /api/mode 的 go pm.Change 一致)。
-func (b *Backend) RequestMode(m int) { go b.pm.Change(appsettings.ModeType(m)) }
+func (b *Backend) RequestMode(m int) error {
+	return b.pm.Change(appsettings.ModeType(m))
+}
 
 // ---------- 模式附属开关(原 /api/mode/options) ----------
 
@@ -154,41 +159,38 @@ func (b *Backend) ModeOptions() ModeOptions {
 }
 
 // SetModeOption 下发模式附属开关(原 POST key/value)。
-func (b *Backend) SetModeOption(key string, value bool) {
+func (b *Backend) SetModeOption(key string, value bool) error {
 	switch key {
 	case "turboFan":
-		_ = b.fc.SetTurbo(value)
+		return b.fc.SetTurbo(value)
 	case "noiseless":
-		_ = b.fc.SetNoiseless(value)
+		return b.fc.SetNoiseless(value)
 	case "dtt":
 		v := byte(0)
 		if value {
 			v = 1
 		}
-		_ = b.as.WriteU8(appsettings.AddrDTT, v)
-		if value {
-			_ = b.w.SetWMI(121, 25, 130)
-		} else {
-			_ = b.w.SetWMI(121, 25, 2)
+		if err := b.as.WriteU8(appsettings.AddrDTT, v); err != nil {
+			return err
 		}
+		if value {
+			return b.w.SetWMI(121, 25, 130)
+		}
+		return b.w.SetWMI(121, 25, 2)
 	case "lowRefresh":
 		v := byte(0)
 		if value {
 			v = 1
 		}
-		_ = b.as.WriteU8(appsettings.AddrLowRefreshOn, v)
+		return b.as.WriteU8(appsettings.AddrLowRefreshOn, v)
 	case "blueLight":
 		v := 0
 		if value {
 			v = 10
 		}
-		_ = b.as.WriteU8(appsettings.AddrBlueLight, byte(v))
-		if v > 0 {
-			_ = bluelight.SetBlueLightRamp(float64(v)/100*10 + 1)
-		} else {
-			bluelight.ResetDeviceGammaRamp()
-		}
+		return b.SetBlueLight(float64(v))
 	}
+	return nil
 }
 
 // ---------- 偏好(原 /api/preference) ----------
@@ -233,7 +235,9 @@ func (b *Backend) Preference() Pref {
 // SetFlexiCharger 下发充电阈值并记住(原 preference.flexiCharger)。
 func (b *Backend) SetFlexiCharger(mode, start, stop int) error {
 	en := mode != 0
-	b.w.SetFlexiCharger(en, byte(start), byte(stop))
+	if err := b.w.SetFlexiCharger(en, byte(start), byte(stop)); err != nil {
+		return err
+	}
 	if err := b.as.WriteU8(appsettings.AddrFlexiCharger, byte(mode)); err != nil {
 		return err
 	}
@@ -244,7 +248,7 @@ func (b *Backend) SetFlexiCharger(mode, start, stop int) error {
 }
 
 // SetKeyboardPref 下发 Fn 键行为(原 preference.keyboard)。
-func (b *Backend) SetKeyboardPref(fnLock, winKey, fnWin bool) {
+func (b *Backend) SetKeyboardPref(fnLock, winKey, fnWin bool) error {
 	fn, win, fnw := byte(1), byte(1), byte(1)
 	if !fnLock {
 		fn = 2
@@ -255,37 +259,50 @@ func (b *Backend) SetKeyboardPref(fnLock, winKey, fnWin bool) {
 	if !fnWin {
 		fnw = 2
 	}
-	b.w.SetKeyboardSetting(fn, win, fnw)
-	_ = b.as.Write(appsettings.AddrFnLock, 3, []byte{fn, win, fnw})
+	if err := b.w.SetKeyboardSetting(fn, win, fnw); err != nil {
+		return err
+	}
+	return b.as.Write(appsettings.AddrFnLock, 3, []byte{fn, win, fnw})
 }
 
 // SetGPUSwitch 切换 GPU 模式(需重启)。
-func (b *Backend) SetGPUSwitch(v int) { b.w.SetGPUSwitch(v) }
+func (b *Backend) SetGPUSwitch(v int) error { return b.w.SetGPUSwitch(v) }
 
-// SetPgUpDn PgUp/PgDn 启用。
-func (b *Backend) SetPgUpDn(enabled bool) {
+// SetPgUpDn PgUp/PgDn 启用;存储与 WMI 都以 1 表示禁用。
+func (b *Backend) SetPgUpDn(enabled bool) error {
 	v := byte(0)
-	if enabled {
+	if !enabled {
 		v = 1
 	}
-	_ = b.as.WriteU8(appsettings.AddrPgUpDn, v)
-	b.w.SetPgUpDn(!enabled)
+	if err := b.as.WriteU8(appsettings.AddrPgUpDn, v); err != nil {
+		return err
+	}
+	return b.w.SetPgUpDn(!enabled)
 }
 
 // SetBlueLight 蓝光滤镜档位 0..10。
-func (b *Backend) SetBlueLight(v float64) {
-	_ = b.as.WriteU8(appsettings.AddrBlueLight, byte(int(v)))
-	if v > 0 {
-		_ = bluelight.SetBlueLightRamp(v/100*10 + 1)
-	} else {
-		bluelight.ResetDeviceGammaRamp()
+func (b *Backend) SetBlueLight(v float64) error {
+	if err := b.as.WriteU8(appsettings.AddrBlueLight, byte(int(v))); err != nil {
+		return err
 	}
+	var ok bool
+	if v > 0 {
+		ok = bluelight.SetBlueLightRamp(v/100*10 + 1)
+	} else {
+		ok = bluelight.ResetDeviceGammaRamp()
+	}
+	if !ok {
+		return fmt.Errorf("蓝光设置已保存,但显示器 gamma 应用失败")
+	}
+	return nil
 }
 
 // SetLanguage 切换 UI 语言并广播。
-func (b *Backend) SetLanguage(v int) {
-	_ = b.as.WriteU8(appsettings.AddrUILanguage, byte(v))
-	_ = eventbus.WriteOut("clevofnkey^102")
+func (b *Backend) SetLanguage(v int) error {
+	if err := b.as.WriteU8(appsettings.AddrUILanguage, byte(v)); err != nil {
+		return err
+	}
+	return eventbus.WriteOut("clevofnkey^102")
 }
 
 // ---------- 风扇(原 /api/fan/*) ----------
@@ -325,17 +342,27 @@ func (b *Backend) FanConfig() FanConfigOut {
 	}
 }
 
-func (b *Backend) SetFanMode(m int)   { _ = b.fc.SetMode(fan.FanMode(m)) }
-func (b *Backend) SetFanOffset(v int) { _ = b.fc.SetOffsetPercent(v) }
+func (b *Backend) SetFanMode(m int) error   { return b.fc.SetMode(fan.FanMode(m)) }
+func (b *Backend) SetFanOffset(v int) error { return b.fc.SetOffsetPercent(v) }
 
 // FanTableOut 三点曲线(温度/转速百分比)。
 type FanTableOut struct{ T1, T2, T3, D1, D2, D3 int }
 
+func validFanTable(t FanTableOut) bool {
+	return t.T1 >= 0 && t.T1 < t.T2 && t.T2 < t.T3 && t.T3 < 100 &&
+		t.D1 >= 0 && t.D1 <= t.D2 && t.D2 <= t.D3 && t.D3 <= 100
+}
+
 func (b *Backend) FanTables() [3]FanTableOut {
 	tables := b.fc.ReadCustomTable()
+	defaults := b.fc.ReadInfo().DefTables
 	var out [3]FanTableOut
 	for i, t := range tables {
 		out[i] = FanTableOut{T1: t.T1, T2: t.T2, T3: t.T3, D1: t.D1, D2: t.D2, D3: t.D3}
+		if !validFanTable(out[i]) {
+			t = defaults[i]
+			out[i] = FanTableOut{T1: t.T1, T2: t.T2, T3: t.T3, D1: t.D1, D2: t.D2, D3: t.D3}
+		}
 	}
 	return out
 }
@@ -343,21 +370,31 @@ func (b *Backend) FanTables() [3]FanTableOut {
 // SaveFanTables 保存自定义曲线并切到自定义模式(原 POST /api/fan/table)。
 func (b *Backend) SaveFanTables(in [3]FanTableOut) error {
 	var tables [3]fan.FanTable
+	valid := false
 	for i, t := range in {
+		if t == (FanTableOut{}) {
+			continue
+		}
+		if !validFanTable(t) {
+			return fmt.Errorf("风扇 %d 曲线无效: 温度须递增且小于100℃,占空须在0..100%%内单调递增", i+1)
+		}
+		valid = true
 		tables[i] = fan.FanTable{
 			T1: t.T1, T2: t.T2, T3: t.T3, T4: 100,
 			D1: t.D1, D2: t.D2, D3: t.D3, D4: 100,
 			T2Def: t.T2, T3Def: t.T3, D2Def: t.D2, D3Def: t.D3,
 		}
 	}
+	if !valid {
+		return fmt.Errorf("没有可用的风扇曲线,不能启用自定义模式")
+	}
 	if err := b.fc.WriteCustomTable(tables); err != nil {
 		return err
 	}
-	_ = b.fc.SetMode(fan.Custom)
-	return nil
+	return b.fc.SetMode(fan.Custom)
 }
 
-func (b *Backend) ResetFanTables() { _ = b.fc.LoadDefaultTable() }
+func (b *Backend) ResetFanTables() error { return b.fc.LoadDefaultTable() }
 
 // AntiDustOut 除尘状态。
 type AntiDustOut struct {
@@ -372,9 +409,9 @@ func (b *Backend) AntiDust() AntiDustOut {
 	return AntiDustOut{Enabled: en, Days: days, Resume: resume, Hour: hour, Running: b.fc.AntiDustStatus() != 0}
 }
 
-func (b *Backend) RunAntiDust() { _ = b.fc.RunAntiDust() }
-func (b *Backend) SetAntiDustSchedule(days, hour int, resume bool) {
-	_ = b.fc.SetAntiDustScheduler(days, resume, hour)
+func (b *Backend) RunAntiDust() error { return b.fc.RunAntiDust() }
+func (b *Backend) SetAntiDustSchedule(days, hour int, resume bool) error {
+	return b.fc.SetAntiDustScheduler(days, resume, hour)
 }
 
 // ---------- 键盘灯(原 /api/kb/*) ----------
@@ -476,19 +513,22 @@ func (b *Backend) KBCmd(req KBRequest) error {
 		case "lightbar":
 			base = 617
 		}
+		if err != nil {
+			return err
+		}
 		if base > 0 {
-			_ = b.as.Write(base, 3, []byte{byte(req.R), byte(req.G), byte(req.B)})
+			err = b.as.Write(base, 3, []byte{byte(req.R), byte(req.G), byte(req.B)})
 		}
 	case "effect":
 		err = b.kb.SetEffectRGB(keyboard.Effect(req.Effect))
-		if req.Effect == int(keyboard.EffBreath) {
-			_ = b.kb.SetAllColor(t, col)
+		if err == nil && req.Effect == int(keyboard.EffBreath) {
+			err = b.kb.SetAllColor(t, col)
 		}
 	case "sleep":
 		on := req.Mode == 1
 		err = b.kb.SetSleepTimerTrigger(on)
-		if on && req.Seconds > 0 {
-			err = b.kb.SetSleepTimerMinutes(req.Seconds / 60)
+		if err == nil && on && req.Seconds > 0 {
+			err = b.kb.SetSleepTimerMinutes((req.Seconds + 59) / 60)
 		}
 	case "override":
 		if req.Override != nil {
@@ -574,25 +614,32 @@ func (b *Backend) Battery() BatteryOut {
 }
 
 // BatteryRefresh 电池校准控制(action: start|stop)。
-func (b *Backend) BatteryRefresh(action string) {
+func (b *Backend) BatteryRefresh(action string) error {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.batState == nil {
 		b.batState = &batteryState{}
 	}
 	st := b.batState
 	switch action {
 	case "start":
-		battery.RefreshCommand(b.w, 1, 0, 1) // 先恢复
-		battery.RefreshCommand(b.w, 0, 1, 0) // 开始放电
+		if err := battery.RefreshCommand(b.w, 1, 0, 1); err != nil {
+			return err
+		}
+		if err := battery.RefreshCommand(b.w, 0, 1, 0); err != nil {
+			return err
+		}
 		st.Ongoing = battery.Discharge1
 		st.Started = time.Now()
-		_ = eventbus.WriteOut("clevobattery^207^1")
+		return eventbus.WriteOut("clevobattery^207^1")
 	case "stop":
-		battery.RefreshCommand(b.w, 1, 0, 1)
+		if err := battery.RefreshCommand(b.w, 1, 0, 1); err != nil {
+			return err
+		}
 		st.Ongoing = battery.Stop
-		_ = eventbus.WriteOut("clevobattery^207^0")
+		return eventbus.WriteOut("clevobattery^207^0")
 	}
-	b.mu.Unlock()
+	return nil
 }
 
 // ---------- 节能计划(原 /api/energy*) ----------

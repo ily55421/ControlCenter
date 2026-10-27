@@ -47,9 +47,14 @@ var ErrNoDevice = errors.New("acpibridge: 未找到 ACPI 桥设备接口(请确�
 // Bridge 维护与驱动的单连接。EC 是一条串行通道,故全部 IOCTL 在 mu 下
 // 整段执行(open + DeviceIoControl),并发调用方依次排队,与原生 DLL 行为一致。
 type Bridge struct {
-	mu   sync.Mutex
-	dev  windows.Handle
-	path string
+	mu        sync.Mutex
+	dev       windows.Handle
+	path      string
+	transport func(code uint32, in, out []byte) error
+}
+
+func NewWithTransport(transport func(code uint32, in, out []byte) error) *Bridge {
+	return &Bridge{transport: transport}
 }
 
 var defaultBridge = &Bridge{}
@@ -196,6 +201,9 @@ func parseWMIOutput(out []byte) ([]wmiEntry, error) {
 func (b *Bridge) deviceIoControl(code uint32, in []byte, out []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.transport != nil {
+		return b.transport(code, in, out)
+	}
 	h, err := b.openLocked()
 	if err != nil {
 		return err

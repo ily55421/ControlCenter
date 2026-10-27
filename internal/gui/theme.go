@@ -243,15 +243,9 @@ func card(gtx C, o cardOpt, body layout.Widget) D {
 	if gtx.Constraints.Max.X > 0 {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	}
-	// 撑高请求:调用方用 Min.Y 指定卡片高度(页面填充),此时底色要画满该高度。
-	fillH := 0
-	if gtx.Constraints.Min.Y > 0 && gtx.Constraints.Min.Y != gtx.Constraints.Max.Y {
-		fillH = gtx.Constraints.Min.Y - sp16
-	}
 	gtx.Constraints.Max.Y = math.MaxInt32 / 2
 	gtx.Constraints.Min.Y = 0
 	return layout.Inset{Bottom: sp16}.Layout(gtx, func(gtx C) D {
-		w := gtx.Constraints.Max.X
 		head := func(gtx C) D {
 			if o.title == "" {
 				return D{}
@@ -263,30 +257,6 @@ func card(gtx C, o cardOpt, body layout.Widget) D {
 				Left: cardPadX, Right: cardPadX,
 				Top: cardPadY, Bottom: cardPadY,
 			}.Layout(gtx, body)
-		}
-		if fillH > 0 {
-			// 撑高:底色用显式高度(Expanded 只按内容尺寸铺底,不会跟着变长);
-			// 标题留在顶部,正文在剩余高度里垂直居中,避免"卡片很高、内容挤在顶上"。
-			gtx.Constraints.Min.Y = fillH
-			gtx.Constraints.Max.Y = fillH
-			return layout.Stack{}.Layout(gtx,
-				layout.Expanded(func(gtx C) D { return cardSurface(gtx, o) }),
-				layout.Stacked(func(gtx C) D {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(head),
-						layout.Flexed(1, func(gtx C) D {
-							return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-								layout.Stacked(func(gtx C) D {
-									if w > 0 {
-										gtx.Constraints.Min.X = w
-										gtx.Constraints.Max.X = w
-									}
-									return bodyBlock(gtx)
-								}))
-						}),
-					)
-				}),
-			)
 		}
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx C) D { return cardSurface(gtx, o) }),
@@ -333,7 +303,7 @@ func cardHead(gtx C, o cardOpt) D {
 				kids := []layout.FlexChild{cardHeadTitle(o)}
 				if o.action != nil {
 					kids = append(kids,
-						layout.Flexed(1, func(gtx C) D { return D{} }),
+						layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }),
 						layout.Rigid(func(gtx C) D {
 							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 								layout.Rigid(o.action))
@@ -349,6 +319,7 @@ func cardHead(gtx C, o cardOpt) D {
 // cardHeadTitle 头部左组:可选图标胶囊 + 标题(副标题在其下方)。
 func cardHeadTitle(o cardOpt) layout.FlexChild {
 	return layout.Rigid(func(gtx C) D {
+		gtx.Constraints.Min.Y = 0
 		kids := make([]layout.FlexChild, 0, 3)
 		if o.icon != "" {
 			kids = append(kids,
@@ -434,10 +405,10 @@ func drawTab(gtx C, clk *widget.Clickable, s string, active, small, yellow bool)
 				switch {
 				case active:
 					fillRR(gtx, r, rad, alpha(col, 0x24))
-					strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x88), alpha(col, 0x24))
+					strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x88))
 				case clk.Hovered():
 					fillRR(gtx, r, rad, alpha(colText, 0x0A))
-					strokeRR(gtx, r, rad, Snap(gtx, 1), colLine, alpha(colText, 0x0A))
+					strokeRR(gtx, r, rad, Snap(gtx, 1), colLine)
 				}
 				return D{Size: sz}
 			}),
@@ -459,7 +430,7 @@ const (
 )
 
 // actBtn 动作按钮:斜切的霓虹按钮换成圆角分级按钮(primary/soft/warn)。
-// 保留原签名,页面调用点零改动;disabled 时整体降透明度(点击是否受理由调用方保证)。
+// 保留原签名;disabled 时禁用交互并降低透明度。
 func actBtn(gtx C, clk *widget.Clickable, s string, v btnVariant, disabled bool) D {
 	kind := btnSoft
 	switch v {
@@ -569,22 +540,25 @@ func (s *neonSlider) value() int {
 }
 
 func (s *neonSlider) layout(gtx C) D {
-	prev := s.f.Value
-	dims := s.f.Layout(gtx, layout.Horizontal, unit.Dp(8))
-	changed := s.f.Value != prev
-	width := dims.Size.X
-	height := Snap(gtx, 22)
+	width := min(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(sliderMaxW)))
+	if gtx.Constraints.Min.X > 0 {
+		width = min(gtx.Constraints.Max.X, gtx.Constraints.Min.X)
+	}
+	height := Snap(gtx, ctlH)
+	gtx.Constraints = layout.Exact(image.Pt(width, height))
+	s.f.Layout(gtx, layout.Horizontal, unit.Dp(8))
 	col := colOk
 	if s.cyan {
 		col = colAccent
 	}
 	sliderTrack(gtx, image.Rect(0, 0, width, height), s.f.Value, col)
-	// 拖动结束且值变化 → 提交
-	if !s.f.Dragging() && changed {
+	if !s.f.Dragging() {
 		v := s.value()
-		if int(s.committed) != v && s.onChange != nil {
+		if int(s.committed) != v {
 			s.committed = float32(v)
-			s.onChange(v)
+			if s.onChange != nil {
+				s.onChange(v)
+			}
 		}
 	}
 	return D{Size: image.Pt(width, height)}
@@ -622,18 +596,14 @@ func switchBox(gtx C, b *widget.Bool) D {
 // 用 sync.Map 之外的简单 map 即可:只在 UI 线程访问。
 var switchAnims = map[*widget.Bool]*toggle{}
 
-// switchBoxAnimated 用带缓动动画的开关绘制 widget.Bool,并把点击写回 bool。
-// 状态的唯一真相是 *widget.Bool:动画组件只读它、并在点击后写回。
+// Gio 用控件指针标识输入目标,不能复制 widget.Bool。
 func switchBoxAnimated(gtx C, b *widget.Bool) D {
 	t := switchAnims[b]
 	if t == nil {
 		t = &toggle{}
 		switchAnims[b] = t
 	}
-	t.clk = *b // 以调用方的 bool 为准(快照可能已改过值)
-	d := t.layout(gtx)
-	*b = t.clk // 回写点击结果
-	return d
+	return t.layout(gtx, b)
 }
 
 // ---------- 下拉框 ----------
@@ -644,6 +614,7 @@ type dropdown struct {
 	opts    []string
 	sel     int
 	optClks []widget.Clickable
+	list    layout.List
 	open    bool
 	widthDp int
 }
@@ -686,19 +657,20 @@ func (d *dropdown) layout(gtx C) D {
 						return D{Size: image.Pt(w, h)}
 					}),
 					layout.Expanded(func(gtx C) D {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								return layout.Inset{Left: sp10}.Layout(gtx, func(gtx C) D {
-									return txt(gtx, s, textStyle{Size: fsBody2, Col: colText, Lines: 1})
-								})
-							}),
-							layout.Flexed(1, func(gtx C) D { return D{} }),
-							layout.Rigid(func(gtx C) D {
-								return layout.Inset{Right: sp8}.Layout(gtx, func(gtx C) D {
-									return chevron(gtx, d.open, colText3)
-								})
-							}),
-						)
+						return layout.Center.Layout(gtx, func(gtx C) D {
+							return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(1, func(gtx C) D {
+									return layout.Inset{Left: sp10}.Layout(gtx, func(gtx C) D {
+										return txt(gtx, s, textStyle{Size: fsBody2, Col: colText, Lines: 1})
+									})
+								}),
+								layout.Rigid(func(gtx C) D {
+									return layout.Inset{Right: sp8}.Layout(gtx, func(gtx C) D {
+										return chevron(gtx, d.open, colText3)
+									})
+								}),
+							)
+						})
 					}),
 				)
 			})
@@ -714,11 +686,12 @@ func (d *dropdown) layout(gtx C) D {
 			rowH := Snap(gtx, listRowH)
 			h := rowH * rows
 			r := image.Rect(0, 0, w, h)
+			gtx.Constraints = layout.Exact(r.Size())
+			defer clip.Rect(r).Push(gtx.Ops).Pop()
 			fillRR(gtx, r, rad, colLine)
 			fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), colSunken)
-			var lst layout.List
-			lst.Axis = layout.Vertical
-			lst.Layout(gtx, len(d.opts), func(gtx C, i int) D {
+			d.list.Axis = layout.Vertical
+			d.list.Layout(gtx, len(d.opts), func(gtx C, i int) D {
 				hl := i == d.sel
 				if d.optClks[i].Clicked(gtx) {
 					d.sel = i
@@ -745,8 +718,10 @@ func (d *dropdown) layout(gtx C) D {
 							return D{Size: image.Pt(w, rowH)}
 						}),
 						layout.Expanded(func(gtx C) D {
-							return layout.Inset{Left: sp10, Right: sp10}.Layout(gtx, func(gtx C) D {
-								return txt(gtx, d.opts[i], textStyle{Size: fsBody2, Col: fg, Lines: 1})
+							return layout.W.Layout(gtx, func(gtx C) D {
+								return layout.Inset{Left: sp10, Right: sp10}.Layout(gtx, func(gtx C) D {
+									return txt(gtx, d.opts[i], textStyle{Size: fsBody2, Col: fg, Lines: 1})
+								})
 							})
 						}),
 					)
@@ -795,27 +770,36 @@ type toastState struct {
 }
 
 func (g *GUI) toast(msg string) {
+	duration := 1900 * time.Millisecond
+	if strings.HasPrefix(msg, "失败: ") {
+		duration = 5 * time.Second
+	}
 	g.toastS.msg = msg
-	g.toastS.until = time.Now().Add(1900 * time.Millisecond)
-	time.AfterFunc(2100*time.Millisecond, g.win.Invalidate)
+	g.toastS.until = time.Now().Add(duration)
+	time.AfterFunc(duration+200*time.Millisecond, g.win.Invalidate)
 }
 
 func (g *GUI) drawToast(gtx C) {
 	if g.toastS.msg == "" || !time.Now().Before(g.toastS.until) {
 		return
 	}
-	td := measureText(gtx, g.toastS.msg, textStyle{Size: fsBody, Col: colText})
-	padX, padY := Snap(gtx, sp16), Snap(gtx, sp10)
-	w := td.Size.X + 2*padX
-	h := td.Size.Y + 2*padY
-	m := Snap(gtx, sp16)
-	x, y := gtx.Constraints.Max.X-w-m, gtx.Constraints.Max.Y-h-m
+	padX, padY, margin := Snap(gtx, sp16), Snap(gtx, sp10), Snap(gtx, sp16)
+	textContext := gtx
+	width := min(Snap(gtx, 520), gtx.Constraints.Max.X-2*margin)
+	textContext.Constraints = layout.Constraints{Max: image.Pt(width-2*padX, gtx.Constraints.Max.Y/2)}
+	td, call := txtDims(textContext, g.toastS.msg, textStyle{Size: fsBody, Col: colText, Lines: 6})
+	w, h := td.Size.X+2*padX, td.Size.Y+2*padY
+	x, y := gtx.Constraints.Max.X-w-margin, gtx.Constraints.Max.Y-h-margin
 	r := image.Rect(x, y, x+w, y+h)
 	rad := Snap(gtx, rCtl)
+	col := colAccent
+	if strings.HasPrefix(g.toastS.msg, "失败: ") {
+		col = colDanger
+	}
 	softShadow(gtx, r, rad)
-	fillRR(gtx, r, rad, alpha(colAccent, 0x55))
-	fillRR(gtx, r.Inset(Snap(gtx, 1)), rad-Snap(gtx, 1), colHover)
-	drawTextAt(gtx, x+padX, y+padY, g.toastS.msg, textStyle{Size: fsBody, Col: colText})
+	fillRR(gtx, r, rad, colHover)
+	strokeRR(gtx, r, rad, Snap(gtx, 1), col)
+	replayText(gtx, call, x+padX, y+padY)
 }
 
 // ---------- 侧栏图标(矢量描边,对齐 Web 的内联 SVG) ----------
@@ -925,15 +909,16 @@ func drawIcon(gtx C, name string, size unit.Dp, c color.NRGBA) D {
 
 // ---------- 键值行 ----------
 
-// kvRow 一行键值:键固定宽度、弱色;值用主色加粗 —— 卡片里真正要读的是值,
-// 之前键值同为 12sp/次级色,整块文字看上去一样重,扫读时抓不住重点。
+// kvRow 一行键值:键占至多三分之一宽度、弱色;值用主色加粗。
 func kvRow(gtx C, k, v string) D {
+	labelWidth := min(gtx.Dp(unit.Dp(112)), gtx.Constraints.Max.X/3)
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Baseline}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			gtx.Constraints.Min.X = gtx.Dp(unit.Dp(112))
+			gtx.Constraints.Min.X = labelWidth
+			gtx.Constraints.Max.X = labelWidth
 			return txt(gtx, k, textStyle{Size: fsBody2, Col: colText3})
 		}),
-		layout.Rigid(func(gtx C) D {
+		layout.Flexed(1, func(gtx C) D {
 			return txt(gtx, v, textStyle{Size: fsBody, Col: colText, W: font.Medium})
 		}),
 	)
@@ -954,8 +939,10 @@ func labelRow(gtx C, k string, w layout.Widget) D {
 
 // numField 单行数字输入框。
 type numField struct {
-	ed     widget.Editor
-	inited bool
+	ed         widget.Editor
+	inited     bool
+	lastSynced int
+	synced     bool
 }
 
 func (n *numField) init(v int) {
@@ -977,8 +964,9 @@ func (n *numField) setText(v int) {
 
 // sync 用快照值同步输入框(聚焦时不打断输入)。
 func (n *numField) sync(gtx C, v int) {
-	if !gtx.Focused(&n.ed) {
+	if !gtx.Focused(&n.ed) && (!n.synced || v != n.lastSynced) {
 		n.setText(v)
+		n.lastSynced, n.synced = v, true
 	}
 }
 
@@ -1034,14 +1022,12 @@ func maxI(a, b int) int {
 	return b
 }
 
-// drawBackdrop 背景分层:垂直渐变底 → 64dp 网格 → 两处极淡提亮 → 四边暗角。
-// 全部用填充矩形/椭圆实现,单帧 op 数在 60 以内;不做离屏 tile,避免采样/平铺差异。
+// drawBackdrop 用 12 条横带绘制深蓝黑微渐变。
 func drawBackdrop(gtx C) {
 	w, h := gtx.Constraints.Max.X, gtx.Constraints.Max.Y
 	if w <= 0 || h <= 0 {
 		return
 	}
-	// ① 垂直渐变底(#0B1018 → #070A0F),用 12 条横带近似
 	const bands = 12
 	top := color.NRGBA{R: 0x0B, G: 0x10, B: 0x18, A: 0xFF}
 	bottom := colBg
@@ -1050,56 +1036,5 @@ func drawBackdrop(gtx C) {
 		y1 := h * (i + 1) / bands
 		t := float32(i) / float32(bands-1)
 		fillArea(gtx, image.Rect(0, y0, w, y1), mixNRGBA(top, bottom, t))
-	}
-
-	// ② 网格:整屏按 64dp 间距画 1px 弱线(逐行/逐列,不与视口尺寸求余,保证对齐无残块)
-	const cell = 64
-	gridCol := color.NRGBA{R: 0x94, G: 0xA3, B: 0xB8, A: 0x12}
-	for y := cell; y < h; y += cell {
-		hLine(gtx, image.Rect(0, y, w, y), gridCol)
-	}
-	for x := cell; x < w; x += cell {
-		fillArea(gtx, image.Rect(x, 0, x+Snap(gtx, 1), h), gridCol)
-	}
-
-	// ③ 两处极淡径向光:只在上缘/下缘做极弱提亮,避免出现带硬边的色块
-	radial(gtx, float32(w)*0.24, float32(h)*0.02, float32(w)*0.34, alpha(colAccent, 0x06))
-	radial(gtx, float32(w)*0.82, float32(h)*0.98, float32(w)*0.30, alpha(colViolet, 0x05))
-
-	// ④ 四边暗角:上/下/左/右各一条向内渐隐的暗带,压暗四周、聚焦中心
-	const vig = 6
-	vh := h / 14 // 上下暗带高度
-	vw := w / 20 // 左右暗带宽度
-	for i := 0; i < vig; i++ {
-		f := 1 - float32(i)/float32(vig)
-		a := uint8(float32(0x24) * f * f)
-		if a == 0 {
-			continue
-		}
-		col := color.NRGBA{A: a}
-		fillArea(gtx, image.Rect(0, i*vh/vig, w, (i+1)*vh/vig), col)
-		fillArea(gtx, image.Rect(0, h-(i+1)*vh/vig, w, h-i*vh/vig), col)
-		fillArea(gtx, image.Rect(i*vw/vig, 0, (i+1)*vw/vig, h), col)
-		fillArea(gtx, image.Rect(w-(i+1)*vw/vig, 0, w-i*vw/vig, h), col)
-	}
-}
-
-// radial 用同心椭圆叠出柔和光斑(cx,cy 像素中心,r 为最大半径)。
-// 裁剪必须就地开合(闭包内 defer),否则后续背景绘制会被限制在椭圆内(实测坑)。
-func radial(gtx C, cx, cy, r float32, col color.NRGBA) {
-	const layers = 6
-	// 单层 alpha = 总量 / 层数:叠加后中心刚好等于设计值,不会叠成实心色块
-	layerA := uint8(maxI(int(col.A)/layers, 1))
-	for i := 0; i < layers; i++ {
-		f := 1 - float32(i)/float32(layers)
-		rr := r * f
-		if rr < 2 {
-			continue
-		}
-		rect := image.Rect(int(cx-rr), int(cy-rr*0.7), int(cx+rr), int(cy+rr*0.7))
-		func() {
-			defer clip.Ellipse(rect).Push(gtx.Ops).Pop()
-			paint.Fill(gtx.Ops, alpha(col, layerA))
-		}()
 	}
 }

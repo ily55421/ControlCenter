@@ -34,36 +34,40 @@ func (g *GUI) pageSystem(gtx C) D {
 		})
 	}
 	live := g.live.Load()
+	if g.w.systemSource != s {
+		g.w.systemSource = s
+		g.w.noiseless.Value = s.opts.Noiseless
+		g.w.dustResume.Value = s.ad.Resume
+	}
 
 	// ----- 交互(布局期处理点击) -----
 	for i := 0; i < 5; i++ {
 		if g.w.modeTab[i].Clicked(gtx) {
 			m := i
-			g.run("已请求切换到 "+modeNames[m], -1, 0, func() error { g.be.RequestMode(m); return nil })
-			g.after(900*time.Millisecond, pgSystem)
+			g.run("已切换到 "+modeNames[m], pgSystem, 400*time.Millisecond, func() error { return g.be.RequestMode(m) })
 		}
 	}
 	// 风扇模式改由分段控件在布局期回传下标(见 fanTabPicked)
 	if g.w.noiseless.Update(gtx) {
 		v := g.w.noiseless.Value
-		g.run("已下发", pgSystem, 400*time.Millisecond, func() error { g.be.SetModeOption("noiseless", v); return nil })
+		g.run("已下发", pgSystem, 400*time.Millisecond, func() error { return g.be.SetModeOption("noiseless", v) })
 	}
 	// 偏好磁贴
 	pk := s.pref.Keyboard
 	if g.w.tileWin.Clicked(gtx) {
 		g.run("Win 键"+onoff(!pk.WinKey), pgSystem, 400*time.Millisecond,
-			func() error { g.be.SetKeyboardPref(pk.FnLock, !pk.WinKey, pk.FnWin); return nil })
+			func() error { return g.be.SetKeyboardPref(pk.FnLock, !pk.WinKey, pk.FnWin) })
 	}
 	if g.w.tileFnWin.Clicked(gtx) {
 		g.run("Win-Fn 交换"+onoff(!pk.FnWin), pgSystem, 400*time.Millisecond,
-			func() error { g.be.SetKeyboardPref(pk.FnLock, pk.WinKey, !pk.FnWin); return nil })
+			func() error { return g.be.SetKeyboardPref(pk.FnLock, pk.WinKey, !pk.FnWin) })
 	}
 	if g.w.tileFnLock.Clicked(gtx) {
 		g.run("Fn 键锁"+onoff(!pk.FnLock), pgSystem, 400*time.Millisecond,
-			func() error { g.be.SetKeyboardPref(!pk.FnLock, pk.WinKey, pk.FnWin); return nil })
+			func() error { return g.be.SetKeyboardPref(!pk.FnLock, pk.WinKey, pk.FnWin) })
 	}
 	toggleOpt := func(key string, cur bool, name string) {
-		g.run("已下发", pgSystem, 400*time.Millisecond, func() error { g.be.SetModeOption(key, !cur); return nil })
+		g.run("已下发", pgSystem, 400*time.Millisecond, func() error { return g.be.SetModeOption(key, !cur) })
 	}
 	if g.w.tileTurbo.Clicked(gtx) {
 		toggleOpt("turboFan", s.opts.TurboFan, "涡轮风扇")
@@ -75,12 +79,12 @@ func (g *GUI) pageSystem(gtx C) D {
 		toggleOpt("lowRefresh", s.opts.LowRefresh, "低刷新率")
 	}
 	if g.w.dustRun.Clicked(gtx) {
-		g.run("除尘已启动", pgSystem, 600*time.Millisecond, func() error { g.be.RunAntiDust(); return nil })
+		g.run("除尘已启动", pgSystem, 600*time.Millisecond, func() error { return g.be.RunAntiDust() })
 	}
 	if g.w.dustApply.Clicked(gtx) {
 		days, hour, resume := g.w.dustDays.value(), g.w.dustHour.value(), g.w.dustResume.Value
 		g.run("除尘计划已下发", pgSystem, 400*time.Millisecond,
-			func() error { g.be.SetAntiDustSchedule(days, hour, resume); return nil })
+			func() error { return g.be.SetAntiDustSchedule(days, hour, resume) })
 	}
 	if g.w.fanSave.Clicked(gtx) {
 		var in [3]FanTableOut
@@ -91,7 +95,7 @@ func (g *GUI) pageSystem(gtx C) D {
 		g.run("自定义曲线已下发", pgSystem, 400*time.Millisecond, func() error { return g.be.SaveFanTables(in) })
 	}
 	if g.w.fanReset.Clicked(gtx) {
-		g.run("已恢复 EC 默认曲线", pgSystem, 400*time.Millisecond, func() error { g.be.ResetFanTables(); return nil })
+		g.run("已恢复 EC 默认曲线", pgSystem, 400*time.Millisecond, func() error { return g.be.ResetFanTables() })
 	}
 	if g.w.gpuSwitch.Clicked(gtx) {
 		g.navTo(pgPref)
@@ -102,7 +106,7 @@ func (g *GUI) pageSystem(gtx C) D {
 
 	// ----- 布局 -----
 	// 页头(标题层级) → 模式标签 → 双列内容 → 页脚信息条(收口,消灭底部死黑)
-	return spreadCol(gtx,
+	return col(gtx,
 		func(gtx C) D {
 			return pageHead(gtx, "系统监控", "实时利用率 / 温度 / 风扇转速与模式切换", func(gtx C) D {
 				return pillBadge(gtx, modeNames[s.st.Mode], colAccent)
@@ -133,7 +137,7 @@ func (g *GUI) fanTabPicked(j int) {
 		return
 	}
 	m := fanTabModes[j]
-	g.run("风扇模式:"+fanModes[m], pgSystem, 400*time.Millisecond, func() error { g.be.SetFanMode(m); return nil })
+	g.run("风扇模式:"+fanModes[m], pgSystem, 400*time.Millisecond, func() error { return g.be.SetFanMode(m) })
 }
 
 func (g *GUI) modeTabsRow(gtx C, s *sysSnap) D {
@@ -164,14 +168,17 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 		}
 		fanTemps = [3]int{live.Live.CPU.Temp, live.Live.GPU1.Temp, live.Live.GPU2.Temp}
 	}
-	// 动画值:表盘与大数字共用,数字随动画平滑滚动(1s 采样也不显跳变)
 	utilA := g.cpuDial.tick(util)
-	mhzA := g.cpuMHz.tick(float32(mhz))
-	tempA := g.cpuTemp.tick(float32(temp))
+	mhzText, utilText, tempText := "—", "—", "—"
+	if live != nil {
+		mhzText = numOrDash(mhz)
+		utilText = fmt.Sprintf("%d%%", live.Util)
+		tempText = numOrDash(temp)
+	}
 	return col(gtx,
 		// CPU 大表盘(动画:指针平滑扫向目标)
 		func(gtx C) D {
-			return dialSized(gtx, 300, 272, utilA, 100, dialOpt{
+			return dialSized(gtx, 240, 220, utilA, 100, dialOpt{
 				ticks: 50, labels: []string{"0", "20", "40", "60", "80", "100"}, center: "CPU"})
 		},
 		vSpacer(4),
@@ -186,9 +193,9 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 				}
 			}
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				layout.Flexed(1, statCol(fmt.Sprintf("%.0f", mhzA), 38, "MHz · 时序", layout.Start)),
-				layout.Flexed(1, statCol(fmt.Sprintf("%.0f%%", utilA), 30, "利用率", layout.Middle)),
-				layout.Flexed(1, statCol(fmt.Sprintf("%.0f", tempA), 38, "℃ · 温度", layout.End)),
+				layout.Flexed(1, statCol(mhzText, fsStat, "MHz · 频率", layout.Start)),
+				layout.Flexed(1, statCol(utilText, fsStat, "利用率", layout.Middle)),
+				layout.Flexed(1, statCol(tempText, fsStat, "℃ · 温度", layout.End)),
 			)
 		},
 		vSpacer(18),
@@ -239,8 +246,11 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 							return txt(gtx, fmt.Sprintf("%d%%", g.w.fanOffset.value()), textStyle{Size: fsBig, Col: colOk})
 						})
 					},
-					func(gtx C) D { return g.w.fanOffset.layout(gtx) },
-					vSpacer(6),
+					func(gtx C) D {
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return g.w.fanOffset.layout(gtx)
+					},
+					vSpacer(12),
 					func(gtx C) D {
 						badgeTxt := "无计划"
 						if s.ad.Enabled {
@@ -249,34 +259,55 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 						if s.ad.Running {
 							badgeTxt += " · 运行中"
 						}
-						return row(gtx,
-							func(gtx C) D { return actBtn(gtx, &g.w.dustRun, "立即除尘", btnPlain, false) },
-							hSpacer(12),
-							func(gtx C) D { return actBtn(gtx, &g.w.dustApply, "下发除尘计划", btnPlain, false) },
-							hSpacer(12),
+						return col(gtx,
 							func(gtx C) D { return txt(gtx, badgeTxt, textStyle{Size: fsBody2, Col: colText3}) },
-						)
+							vSpacer(8),
+							func(gtx C) D {
+								run := func(gtx C) D { return actBtn(gtx, &g.w.dustRun, "立即除尘", btnPlain, false) }
+								apply := func(gtx C) D { return actBtn(gtx, &g.w.dustApply, "下发除尘计划", btnPlain, false) }
+								if gtx.Constraints.Max.X < gtx.Dp(300) {
+									return col(gtx, func(gtx C) D { return row(gtx, run) }, vSpacer(8),
+										func(gtx C) D { return row(gtx, apply) })
+								}
+								return row(gtx, run, hSpacer(12), apply)
+							})
 					},
+					vSpacer(12),
 					func(gtx C) D {
-						return row(gtx,
-							func(gtx C) D { return txt(gtx, "周期(天)", textStyle{Size: fsBody2, Col: colText3}) },
-							func(gtx C) D { g.w.dustDays.sync(gtx, s.ad.Days); return numBox(gtx, &g.w.dustDays, 64) },
-							hSpacer(10),
-							func(gtx C) D { return txt(gtx, "执行(时)", textStyle{Size: fsBody2, Col: colText3}) },
-							func(gtx C) D { g.w.dustHour.sync(gtx, s.ad.Hour); return numBox(gtx, &g.w.dustHour, 64) },
-							hSpacer(10),
-							func(gtx C) D { return switchBox(gtx, &g.w.dustResume) },
-							func(gtx C) D { return txt(gtx, "唤醒补跑", textStyle{Size: fsBody2, Col: colText3}) },
-						)
+						field := func(label string, n *numField, value int) layout.Widget {
+							return func(gtx C) D {
+								return row(gtx,
+									func(gtx C) D { return txt(gtx, label, textStyle{Size: fsBody2, Col: colText3}) },
+									hSpacer(8),
+									func(gtx C) D { n.sync(gtx, value); return numBox(gtx, n, 64) })
+							}
+						}
+						return col(gtx,
+							func(gtx C) D {
+								days, hour := field("周期(天)", &g.w.dustDays, s.ad.Days), field("执行(时)", &g.w.dustHour, s.ad.Hour)
+								if gtx.Constraints.Max.X < gtx.Dp(300) {
+									return col(gtx, days, vSpacer(10), hour)
+								}
+								return row(gtx, days, hSpacer(16), hour)
+							},
+							vSpacer(10),
+							func(gtx C) D {
+								return row(gtx,
+									func(gtx C) D { return switchBox(gtx, &g.w.dustResume) }, hSpacer(8),
+									func(gtx C) D { return txt(gtx, "唤醒补跑", textStyle{Size: fsBody2, Col: colText3}) })
+							})
 					},
-					vSpacer(10),
+					vSpacer(16),
 					func(gtx C) D { return g.curveRow(gtx, s, fanTemps) },
 					vSpacer(10),
 					func(gtx C) D {
-						return row(gtx,
-							func(gtx C) D { return actBtn(gtx, &g.w.fanSave, "保存并启用自定义曲线", btnPri, false) },
-							hSpacer(12),
-							func(gtx C) D { return actBtn(gtx, &g.w.fanReset, "恢复默认曲线", btnPlain, false) })
+						save := func(gtx C) D { return actBtn(gtx, &g.w.fanSave, "保存并启用自定义曲线", btnPri, false) }
+						reset := func(gtx C) D { return actBtn(gtx, &g.w.fanReset, "恢复默认曲线", btnPlain, false) }
+						if gtx.Constraints.Max.X < gtx.Dp(420) {
+							return col(gtx, func(gtx C) D { return row(gtx, save) }, vSpacer(10),
+								func(gtx C) D { return row(gtx, reset) })
+						}
+						return row(gtx, save, hSpacer(12), reset)
 					},
 				)
 			})
@@ -284,91 +315,93 @@ func (g *GUI) systemLeft(gtx C, s *sysSnap, live *LiveSnap) D {
 	)
 }
 
-// curveRow 三张风扇曲线按可用宽度自适应列数:3 列 → 2 列 → 1 列。
-// 原先固定并排三列各 186dp,可用宽度不足时第三列被挤出或压扁,
-// 拖拽点与"温度/转速"标注不可辨认(P0)。
+// curveColumns 按最小可读宽度决定列数,余下宽度由各列等分。
+func curveColumns(gtx C, avail int) int {
+	return clampI((avail+gtx.Dp(sp10))/(gtx.Dp(curveColW)+gtx.Dp(sp10)), 1, 3)
+}
+
+// curveRow 最多三列,末行保持同样列宽;不会把第三张卡片压成零宽。
 func (g *GUI) curveRow(gtx C, s *sysSnap, fanTemps [3]int) D {
 	names := [3]string{"CPU", "GPU1", "GPU2"}
-	colW, gapW := gtx.Dp(curveColW), gtx.Dp(sp10)
-	avail := gtx.Constraints.Max.X
-	cols := 1
-	switch {
-	case avail >= 3*colW+2*gapW:
-		cols = 3
-	case avail >= 2*colW+gapW:
-		cols = 2
-	}
+	avail, gap := gtx.Constraints.Max.X, gtx.Dp(sp10)
+	cols := curveColumns(gtx, avail)
+	usable := avail - (cols-1)*gap
 	var rows []layout.Widget
 	for start := 0; start < 3; start += cols {
-		end := start + cols
-		if end > 3 {
-			end = 3
+		if start > 0 {
+			rows = append(rows, vSpacer(16))
 		}
-		start, end := start, end
+		start := start
 		rows = append(rows, func(gtx C) D {
-			kids := make([]layout.FlexChild, 0, end-start)
-			for i := start; i < end; i++ {
-				i := i
-				// 列的宽度必须锁死:列内的 txt 会吃掉 Flex 剩余空间,
-				// 导致后续列拿到 Max.X=0 而整体消失(实测)。
+			var kids []layout.FlexChild
+			for j := 0; j < cols && start+j < 3; j++ {
+				if j > 0 {
+					kids = append(kids, layout.Rigid(hSpacerSP(gap)))
+				}
+				i := start + j
+				// 累计取整,第一行连同间距准确填满分配宽度。
+				w := usable*(j+1)/cols - usable*j/cols
 				kids = append(kids, layout.Rigid(func(gtx C) D {
-					gtx.Constraints.Min.X = colW
-					gtx.Constraints.Max.X = colW
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D {
-							return txt(gtx, names[i]+" 曲线", textStyle{Size: fsBody2, Col: colText3})
-						}),
-						layout.Rigid(vSpacer(4)),
-						layout.Rigid(func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) }),
-						layout.Rigid(vSpacer(2)),
-						layout.Rigid(func(gtx C) D {
-							return txt(gtx, "温度℃ / 转速% · 拖拽圆点", textStyle{Size: fsSmall, Col: colText3})
-						}),
-					)
+					gtx.Constraints.Min.X, gtx.Constraints.Max.X = w, w
+					gtx.Constraints.Min.Y = 0
+					return col(gtx,
+						func(gtx C) D { return txt(gtx, names[i]+" 曲线", textStyle{Size: fsBody2, Col: colText2}) },
+						vSpacer(8),
+						func(gtx C) D { return g.curveEditor(gtx, i, s, fanTemps[i]) })
 				}))
 			}
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceAround}.Layout(gtx, kids...)
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, kids...)
 		})
-		rows = append(rows, vSpacer(sp8))
 	}
 	return col(gtx, rows...)
 }
 
-// curveEditor 单风扇可视化三点曲线编辑器(拖拽圆点调整;数值落回 curveEd,
-// 由"保存并启用"统一提交)。超越原版:原 CC40 与旧 Web 版均为纯数字输入。
+// 活跃拖拽的指针 ID;使用非零大小的 curveEd 地址作 tag,避免 struct{} 数组的
+// 三个地址可能相同。结束/失效即删除,不保留已结束的 GUI。
+var curvePointerIDs = make(map[*[6]numField]pointer.ID)
+
+// curveMovePoint 保持温度严格递增、占空非递减,只编辑草稿。
+func curveMovePoint(pts [3][2]int, p, t, d int) [3][2]int {
+	loT, hiT, loD, hiD := 0, 99, 0, 100
+	if p > 0 {
+		loT, loD = pts[p-1][0]+1, pts[p-1][1]
+	}
+	if p < 2 {
+		hiT, hiD = pts[p+1][0]-1, pts[p+1][1]
+	}
+	pts[p] = [2]int{clampI(t, loT, hiT), clampI(d, loD, hiD)}
+	return pts
+}
+
+// curveEditor 绘制真实三点表;拖拽仅更新 curveEd,保存接口仍统一提交。
 func (g *GUI) curveEditor(gtx C, i int, s *sysSnap, curTemp int) D {
-	dbgLog("curveEd enter", i, "maxX", gtx.Constraints.Max.X)
-	tbl := s.tables[i]
-	ed := &g.w.curveEd[i]
-	// 快照同步(拖拽中不回写,避免拽着的点被拉回)
+	tbl, ed := s.tables[i], &g.w.curveEd[i]
+	available := validFanTable(tbl)
+	if !available && g.curveDragFan == i {
+		g.curveDragFan, g.curveDragPt = -1, -1
+	}
 	if g.curveDragFan != i {
+		delete(curvePointerIDs, ed)
 		vals := [6]int{tbl.T1, tbl.T2, tbl.T3, tbl.D1, tbl.D2, tbl.D3}
-		for j := 0; j < 6; j++ {
+		for j := range vals {
 			ed[j].sync(gtx, vals[j])
 		}
 	}
-	pts := [3][2]int{
-		{maxI(ed[0].value(), 35), ed[3].value()},
-		{maxI(ed[1].value(), 35), ed[4].value()},
-		{maxI(ed[2].value(), 35), ed[5].value()},
+	pts := [3][2]int{{ed[0].value(), ed[3].value()}, {ed[1].value(), ed[4].value()}, {ed[2].value(), ed[5].value()}}
+	available = available && validFanTable(FanTableOut{T1: pts[0][0], T2: pts[1][0], T3: pts[2][0], D1: pts[0][1], D2: pts[1][1], D3: pts[2][1]})
+	w, h := gtx.Constraints.Max.X, gtx.Dp(220)
+	invalidate := func() {
+		if g.win != nil {
+			g.win.Invalidate()
+		}
 	}
-	w, h := gtx.Dp(curveColW-sp16-12), gtx.Dp(112)
-	// 列比预期窄时按可用宽度收缩:绘制、命中与返回尺寸必须同一个 w
-	if m := gtx.Constraints.Max.X; m > 0 && m < w {
-		w = m
+	finish := func() {
+		g.curveDragFan, g.curveDragPt = -1, -1
+		delete(curvePointerIDs, ed)
+		invalidate()
 	}
-	dragIdx := -1
-	if g.curveDragFan == i {
-		dragIdx = g.curveDragPt
-	}
-	dims := drawFanCurve(gtx, w, h, pts, dragIdx, curTemp)
-
-	// 指针交互:按下命中检测(半径 16px)→ 拖拽实时改 T/D → 释放结束
-	defer clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops).Pop()
-	tag := &g.w.curveTag[i]
-	event.Op(gtx.Ops, tag)
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
+		ev, ok := gtx.Event(pointer.Filter{Target: ed, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
 			break
 		}
@@ -378,39 +411,79 @@ func (g *GUI) curveEditor(gtx C, i int, s *sysSnap, curTemp int) D {
 		}
 		switch pe.Kind {
 		case pointer.Press:
-			for p := 0; p < 3; p++ {
+			if !available || g.curveDragFan >= 0 || (pe.Source == pointer.Mouse && pe.Buttons != pointer.ButtonPrimary) {
+				continue
+			}
+			nearest, distance := -1, float64(gtx.Dp(14))
+			for p := range pts {
 				c := curveXY(gtx, w, h, pts[p][0], pts[p][1])
-				if math.Hypot(float64(pe.Position.X-c.X), float64(pe.Position.Y-c.Y)) < 16 {
-					g.curveDragFan, g.curveDragPt = i, p
-					g.win.Invalidate()
-					break
+				if d := math.Hypot(float64(pe.Position.X-c.X), float64(pe.Position.Y-c.Y)); d < distance {
+					nearest, distance = p, d
 				}
 			}
-		case pointer.Drag:
-			if g.curveDragFan == i {
+			if nearest >= 0 {
+				g.curveDragFan, g.curveDragPt = i, nearest
+				curvePointerIDs[ed] = pe.PointerID
+				gtx.Execute(pointer.GrabCmd{Tag: ed, ID: pe.PointerID})
+				invalidate()
+			}
+		case pointer.Drag, pointer.Release:
+			if g.curveDragFan != i || pe.PointerID != curvePointerIDs[ed] {
+				continue
+			}
+			if available {
 				nt, nd := curveTD(gtx, w, h, pe.Position.X, pe.Position.Y)
 				p := g.curveDragPt
-				// 夹紧并保持 T1 < T2 < T3
-				lo, hi := 35, 100
-				if p > 0 {
-					lo = pts[p-1][0] + 1
-				}
-				if p < 2 {
-					hi = pts[p+1][0] - 1
-				}
-				nt = clampI(nt, lo, hi)
-				ed[p].setText(nt)
-				ed[p+3].setText(nd)
-				g.win.Invalidate()
+				pts = curveMovePoint(pts, p, nt, nd)
+				ed[p].setText(pts[p][0])
+				ed[p+3].setText(pts[p][1])
+				invalidate()
 			}
-		case pointer.Release, pointer.Cancel:
+			if pe.Kind == pointer.Release {
+				finish() // 抓取保证图外释放也会送达;Gio 自动释放 pointer grab。
+			}
+		case pointer.Cancel:
 			if g.curveDragFan == i {
-				g.curveDragFan, g.curveDragPt = -1, -1
-				g.win.Invalidate()
+				finish()
 			}
 		}
 	}
-	return dims
+	if !available {
+		if g.curveDragFan == i {
+			finish()
+		}
+		return col(gtx,
+			func(gtx C) D { return txt(gtx, "曲线不可用", textStyle{Size: fsBody2, Col: colText3}) },
+			vSpacer(6),
+			func(gtx C) D {
+				return txt(gtx, "未读取到有效硬件表，无法预览或拖拽。", textStyle{Size: fsSmall, Col: colText3})
+			})
+	}
+	return col(gtx,
+		func(gtx C) D {
+			dragIdx := -1
+			if g.curveDragFan == i {
+				dragIdx = g.curveDragPt
+			}
+			dims := drawFanCurve(gtx, w, h, pts, dragIdx, curTemp)
+			defer clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, ed)
+			return dims
+		},
+		vSpacer(8),
+		func(gtx C) D {
+			var labels []layout.Widget
+			for p := range pts {
+				p := p
+				labels = append(labels, func(gtx C) D {
+					return txt(gtx, fmt.Sprintf("点 %d · %d℃ / %d%%", p+1, pts[p][0], pts[p][1]), textStyle{Size: fsBody2, Col: colAccent})
+				})
+			}
+			labels = append(labels, vSpacer(6), func(gtx C) D {
+				return txt(gtx, "拖拽圆点调整 · 保存后启用", textStyle{Size: fsSmall, Col: colText3})
+			})
+			return col(gtx, labels...)
+		})
 }
 
 // gridPair 两个等宽半列(窄窗自动退化为单列堆叠)。
@@ -469,7 +542,11 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 							if rpm == 0 && temp == 0 {
 								return txt(gtx, name+" 无数据", textStyle{Size: fsSmall, Col: colText3})
 							}
-							return txt(gtx, fmt.Sprintf("%s %d RPM·%d℃", name, rpm, temp), textStyle{Size: fsSmall, Col: colText3})
+							return col(gtx,
+								func(gtx C) D {
+									return txt(gtx, fmt.Sprintf("%s · %d RPM", name, rpm), textStyle{Size: fsSmall, Col: colText2})
+								},
+								func(gtx C) D { return txt(gtx, fmt.Sprintf("%d ℃", temp), textStyle{Size: fsSmall, Col: colText3}) })
 						}),
 					)
 				}
@@ -489,11 +566,11 @@ func (g *GUI) systemRight(gtx C, s *sysSnap, live *LiveSnap) D {
 			if gpuDead {
 				return col(gtx,
 					func(gtx C) D {
-						return badge(gtx, "独显已断电", "warn")
+						return badge(gtx, "独显遥测不可用", "warn")
 					},
 					vSpacer(4),
 					func(gtx C) D {
-						return txt(gtx, "安静模式下 EC 不上报独显数据", textStyle{Size: fsSmall, Col: colText3})
+						return txt(gtx, "EC 未返回温度或转速,不能据此判断独显电源状态", textStyle{Size: fsSmall, Col: colText3})
 					},
 					vSpacer(4),
 					func(gtx C) D { return kvRow(gtx, "NVAPI", readyTxt) },

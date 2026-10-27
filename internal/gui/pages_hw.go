@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/widget"
 
 	"controlcenter/internal/cpuoc"
 	"controlcenter/internal/energysave"
@@ -106,7 +107,7 @@ func (g *GUI) pageCPU(gtx C) D {
 	pget := func(i int) *numField { return &g.w.pcoreEd[i] }
 	eget := func(i int) *numField { return &g.w.ecoreEd[i] }
 
-	return spreadCol(gtx,
+	return col(gtx,
 		func(gtx C) D {
 			return pageHead(gtx, "CPU 超频", "XTU 通道的功耗/电压与 P/E 核倍频", func(gtx C) D {
 				return pillBadge(gtx, fmt.Sprintf("PL1 %dW", g.w.cpuPL1.value()), colAccent)
@@ -211,7 +212,7 @@ func (g *GUI) pageGPU(gtx C) D {
 		return col(gtx,
 			func(gtx C) D {
 				return row(gtx, func(gtx C) D { return txt(gtx, "GPU0 核心", textStyle{Size: fsBody, Col: colText3}) },
-					layout.Flexed(1, func(gtx C) D { return D{} }),
+					layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }),
 					func(gtx C) D {
 						return txt(gtx, fmt.Sprintf("%d MHz", g.w.gc0.value()), textStyle{Size: fsBig, Col: colOk})
 					})
@@ -219,7 +220,7 @@ func (g *GUI) pageGPU(gtx C) D {
 			func(gtx C) D { return g.w.gc0.layout(gtx) },
 			func(gtx C) D {
 				return row(gtx, func(gtx C) D { return txt(gtx, "GPU0 显存", textStyle{Size: fsBody, Col: colText3}) },
-					layout.Flexed(1, func(gtx C) D { return D{} }),
+					layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }),
 					func(gtx C) D {
 						return txt(gtx, fmt.Sprintf("%d MHz", g.w.gm0.value()), textStyle{Size: fsBig, Col: colOk})
 					})
@@ -233,7 +234,7 @@ func (g *GUI) pageGPU(gtx C) D {
 					vSpacer(8),
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return txt(gtx, "GPU1 核心", textStyle{Size: fsBody, Col: colText3}) },
-							layout.Flexed(1, func(gtx C) D { return D{} }),
+							layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }),
 							func(gtx C) D {
 								return txt(gtx, fmt.Sprintf("%d MHz", g.w.gc1.value()), textStyle{Size: fsBig, Col: colOk})
 							})
@@ -241,7 +242,7 @@ func (g *GUI) pageGPU(gtx C) D {
 					func(gtx C) D { return g.w.gc1.layout(gtx) },
 					func(gtx C) D {
 						return row(gtx, func(gtx C) D { return txt(gtx, "GPU1 显存", textStyle{Size: fsBody, Col: colText3}) },
-							layout.Flexed(1, func(gtx C) D { return D{} }),
+							layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }),
 							func(gtx C) D {
 								return txt(gtx, fmt.Sprintf("%d MHz", g.w.gm1.value()), textStyle{Size: fsBig, Col: colOk})
 							})
@@ -265,7 +266,7 @@ func (g *GUI) pageGPU(gtx C) D {
 			})
 		},
 		func(gtx C) D {
-			return grid2Fill(gtx, 1, 1,
+			return grid2(gtx, 1, 1,
 				func(gtx C) D {
 					return panel(gtx, "GPU 资讯", func(gtx C) D {
 						return col(gtx,
@@ -290,10 +291,10 @@ func (g *GUI) pageBat(gtx C) D {
 		return panel(gtx, "正在加载", func(gtx C) D { return txt(gtx, "正在读取电池信息…", textStyle{Size: fsBig, Col: colText3}) })
 	}
 	if g.w.batStartB.clicked(gtx) {
-		g.run("已下发", pgBat, 600*time.Millisecond, func() error { g.be.BatteryRefresh("start"); return nil })
+		g.run("已下发", pgBat, 600*time.Millisecond, func() error { return g.be.BatteryRefresh("start") })
 	}
 	if g.w.batStopB.Clicked(gtx) {
-		g.run("已下发", pgBat, 400*time.Millisecond, func() error { g.be.BatteryRefresh("stop"); return nil })
+		g.run("已下发", pgBat, 400*time.Millisecond, func() error { return g.be.BatteryRefresh("stop") })
 	}
 	// 无电池 / 未取到容量时不得显示"健康":Evaluate 在数据全空时同样返回 Healthy,
 	// 只能以设备是否报告设计容量作为"有电池数据"的判据(与 FlexiCharger 页一致)。
@@ -322,7 +323,7 @@ func (g *GUI) pageBat(gtx C) D {
 			})
 		},
 		func(gtx C) D {
-			return grid2Fill(gtx, 1, 1,
+			return grid2(gtx, 1, 1,
 				func(gtx C) D {
 					return panel(gtx, "电池信息", func(gtx C) D {
 						return col(gtx,
@@ -406,7 +407,7 @@ func (g *GUI) pageEnergy(gtx C) D {
 			})
 		},
 		func(gtx C) D {
-			return grid2Fill(gtx, 1, 1,
+			return grid2(gtx, 1, 1,
 				func(gtx C) D {
 					return panel(gtx, "实时功耗", func(gtx C) D {
 						return col(gtx,
@@ -483,25 +484,7 @@ func (g *GUI) pagePref(gtx C) D {
 	if s == nil {
 		return panel(gtx, "正在加载", func(gtx C) D { return txt(gtx, "正在读取偏好…", textStyle{Size: fsBig, Col: colText3}) })
 	}
-	g.w.pfFnLock.Value = s.Keyboard.FnLock
-	g.w.pfWin.Value = s.Keyboard.WinKey
-	g.w.pfFnWin.Value = s.Keyboard.FnWin
-	g.w.pfPg.Value = s.PgUpDn
-	g.w.pfBL.syncExt(s.BlueLight)
-
-	if g.w.pfKbApply.Clicked(gtx) {
-		fn, win, fnw := g.w.pfFnLock.Value, g.w.pfWin.Value, g.w.pfFnWin.Value
-		g.run("键盘设置已下发", pgPref, actDur, func() error { g.be.SetKeyboardPref(fn, win, fnw); return nil })
-	}
-	if g.w.pfDispApply.Clicked(gtx) {
-		bl, pg := g.w.pfBL.value(), g.w.pfPg.Value
-		g.run("显示设置已应用", pgPref, actDur, func() error {
-			g.be.SetBlueLight(float64(bl))
-			g.be.SetPgUpDn(pg)
-			return nil
-		})
-	}
-	// GPU 模式下拉:按支持位重建选项
+	// GPU 模式值与支持位对应;下拉控件仅在新快照到达时重建。
 	type gpuOpt struct {
 		label string
 		val   int
@@ -519,24 +502,49 @@ func (g *GUI) pagePref(gtx C) D {
 	if s.GPUSwitch.Support&8 != 0 {
 		gpuOpts = append(gpuOpts, gpuOpt{"动态切换", 4})
 	}
-	g.w.pfGPU.opts = make([]string, len(gpuOpts))
-	gpuSel := 0
-	for i, o := range gpuOpts {
-		g.w.pfGPU.opts[i] = o.label
-		if o.val == s.GPUSwitch.Current {
-			gpuSel = i
+	if g.w.prefSource != s {
+		g.w.prefSource = s
+		g.w.pfFnLock.Value = s.Keyboard.FnLock
+		g.w.pfWin.Value = s.Keyboard.WinKey
+		g.w.pfFnWin.Value = s.Keyboard.FnWin
+		g.w.pfPg.Value = s.PgUpDn
+		g.w.pfBL.set(s.BlueLight)
+		g.w.pfLang.sel = clampI(s.Language, 0, len(langNames)-1)
+		g.w.pfGPU.opts = make([]string, len(gpuOpts))
+		g.w.pfGPU.optClks = make([]widget.Clickable, len(gpuOpts))
+		g.w.pfGPU.sel = -1
+		g.w.pfGPU.open = false
+		g.w.pfGPUApply.arm = time.Time{}
+		for i, o := range gpuOpts {
+			g.w.pfGPU.opts[i] = o.label
+			if i == 0 || o.val == s.GPUSwitch.Current {
+				g.w.pfGPU.sel = i
+			}
 		}
 	}
-	g.w.pfGPU.sel = gpuSel
+	if g.w.pfKbApply.Clicked(gtx) {
+		fn, win, fnw := g.w.pfFnLock.Value, g.w.pfWin.Value, g.w.pfFnWin.Value
+		g.run("键盘设置已下发", pgPref, actDur, func() error { return g.be.SetKeyboardPref(fn, win, fnw) })
+	}
+	if g.w.pfDispApply.Clicked(gtx) {
+		bl, pg := g.w.pfBL.value(), g.w.pfPg.Value
+		g.run("显示设置已应用", pgPref, actDur, func() error {
+			if err := g.be.SetBlueLight(float64(bl)); err != nil {
+				return err
+			}
+			return g.be.SetPgUpDn(pg)
+		})
+	}
 	if g.w.pfGPUApply.clicked(gtx) {
+		gpuSel := g.w.pfGPU.selected()
 		if gpuSel >= 0 && gpuSel < len(gpuOpts) {
 			v := gpuOpts[gpuSel].val
-			g.run("已下发,即将重启", -1, 0, func() error { g.be.SetGPUSwitch(v); return nil })
+			g.run("GPU 模式已下发,请保存工作后手动重启", pgPref, actDur, func() error { return g.be.SetGPUSwitch(v) })
 		}
 	}
 	if g.w.pfLangApply.Clicked(gtx) {
 		v := g.w.pfLang.selected()
-		g.run("语言已切换", pgPref, actDur, func() error { g.be.SetLanguage(v); return nil })
+		g.run("语言已切换", pgPref, actDur, func() error { return g.be.SetLanguage(v) })
 	}
 
 	return col(gtx,
@@ -546,9 +554,9 @@ func (g *GUI) pagePref(gtx C) D {
 			})
 		},
 		func(gtx C) D {
-			return fillPair(gtx,
+			return grid2(gtx, 1, 1,
 				func(gtx C) D {
-					return colFill(gtx, pageSlack,
+					return col(gtx,
 						func(gtx C) D {
 							return panel(gtx, "键盘 Fn 键行为", func(gtx C) D {
 								return col(gtx,
@@ -587,17 +595,20 @@ func (g *GUI) pagePref(gtx C) D {
 						})
 				},
 				func(gtx C) D {
-					return colFill(gtx, pageSlack,
+					return col(gtx,
 						func(gtx C) D {
 							return panel(gtx, "GPU 模式切换(需重启)", func(gtx C) D {
+								if len(gpuOpts) == 0 {
+									return txt(gtx, "本机不支持 GPU 模式切换", textStyle{Size: fsBody2, Col: colText3})
+								}
 								return col(gtx,
 									func(gtx C) D {
 										return row(gtx, func(gtx C) D { return g.w.pfGPU.layout(gtx) },
-											hSpacer(14), func(gtx C) D { return g.w.pfGPUApply.layout(gtx, "应用并重启") })
+											hSpacer(14), func(gtx C) D { return g.w.pfGPUApply.layout(gtx, "应用模式") })
 									},
 									vSpacer(6),
 									func(gtx C) D {
-										return txt(gtx, "切换后立即重启,未保存的改动会丢失", textStyle{Size: fsBody2, Col: colText3})
+										return txt(gtx, "下发后需手动重启生效,请先保存工作", textStyle{Size: fsBody2, Col: colText3})
 									})
 							})
 						},

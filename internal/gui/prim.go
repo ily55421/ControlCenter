@@ -8,6 +8,7 @@ package gui
 import (
 	"image"
 	"image/color"
+	"math"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -47,19 +48,18 @@ func fillRR(gtx C, r image.Rectangle, radius int, col color.NRGBA) {
 	paint.Fill(gtx.Ops, col)
 }
 
-// strokeRR 圆角矩形描边 w 像素(用「外填 + 内缩覆盖」两层矩形,比路径描边省 op,
-// 圆角处也不会出现 1px 亮缝)。inner 为挖空时重绘的底色。
-func strokeRR(gtx C, r image.Rectangle, radius, w int, col, inner color.NRGBA) {
-	if r.Dx() <= 0 || r.Dy() <= 0 || w <= 0 || col.A == 0 {
+// 半透明内填不能擦除外填,描边必须只覆盖边缘。
+func strokeRR(gtx C, r image.Rectangle, radius, w int, col color.NRGBA) {
+	if r.Dx() <= w || r.Dy() <= w || w <= 0 || col.A == 0 {
 		return
 	}
-	fillRR(gtx, r, radius, col)
-	ir := r.Inset(w)
-	innerR := radius - w
-	if innerR < 0 {
-		innerR = 0
-	}
-	fillRR(gtx, ir, innerR, inner)
+	half := float32(w) / 2
+	defer op.Affine(f32.AffineId().Offset(f32.Pt(half, half))).Push(gtx.Ops).Pop()
+	r.Max = r.Max.Sub(image.Pt(w, w))
+	radius = max(0, min(radius-w/2, r.Dx()/2, r.Dy()/2))
+	path := clip.RRect{Rect: r, NE: radius, NW: radius, SE: radius, SW: radius}.Path(gtx.Ops)
+	defer clip.Stroke{Path: path, Width: float32(w)}.Op().Push(gtx.Ops).Pop()
+	paint.Fill(gtx.Ops, col)
 }
 
 // softShadow 双层柔和投影:Gio 没有 blur,用「下移 5dp / α=0x38」+「下移 2dp / α=0x28」
@@ -169,23 +169,20 @@ type textStyle struct {
 
 // txt 按样式绘制一段文本。
 func txt(gtx C, s string, st textStyle) D {
+	gtx.Constraints.Min.Y = 0
 	return materialLabel(s, st).Layout(gtx)
 }
 
-// measureText 量一段文本的自然尺寸,**不**向当前帧落任何 op。
-// 用独立 scratch Ops 而不是 op.Record:录出的宏回放时会再叠一层当时的变换,
-// 画布类组件(表盘刻度标签、曲线图例)因此整体漂移过(实测)。
 func measureText(gtx C, s string, st textStyle) D {
 	var scratch op.Ops
-	gm := gtx
-	gm.Ops = &scratch
-	gm.Constraints = layout.Constraints{} // 无限约束 → 自然尺寸
-	return txt(gm, s, st)
+	gtx.Ops = &scratch
+	gtx.Constraints = layout.Constraints{Max: image.Pt(math.MaxInt32/2, math.MaxInt32/2)}
+	return txt(gtx, s, st)
 }
 
-// drawTextAt 在 (x,y) 处相对当前变换原位绘制文本。
 func drawTextAt(gtx C, x, y int, s string, st textStyle) {
-	defer op.Affine(f32.NewAffine2D(1, 0, float32(x), 0, 1, float32(y))).Push(gtx.Ops).Pop()
+	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+	gtx.Constraints.Min = image.Point{}
 	txt(gtx, s, st)
 }
 

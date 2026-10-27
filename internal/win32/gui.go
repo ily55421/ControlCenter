@@ -12,14 +12,14 @@ import (
 )
 
 const (
-	wsChild  = 0x40000000
+	wsChild    = 0x40000000
 	wsVisible0 = 0x10000000
 
-	bsPushButton = 0
-	esMultiline  = 4
+	bsPushButton  = 0
+	esMultiline   = 4
 	esAutoVScroll = 0x40
-	esReadOnly   = 0x800
-	wsVScroll    = 0x00200000
+	esReadOnly    = 0x800
+	wsVScroll     = 0x00200000
 
 	wmSetFont    = 0x0030
 	wmGetTextLen = 0x000E
@@ -30,8 +30,8 @@ const (
 )
 
 var (
-	procGetModuleHandleW = modkernel32.NewProc("GetModuleHandleW")
-	procSetWindowTextW   = moduser32.NewProc("SetWindowTextW")
+	procGetModuleHandleW  = modkernel32.NewProc("GetModuleHandleW")
+	procSetWindowTextW    = moduser32.NewProc("SetWindowTextW")
 	procGetWindowTextLenW = moduser32.NewProc("GetWindowTextLengthW")
 	procSendMessageW      = moduser32.NewProc("SendMessageW")
 	procGetStockObject    = modgdi32.NewProc("GetStockObject")
@@ -69,11 +69,14 @@ func NewSimpleWindow(title string, width, height int) (*SimpleWindow, error) {
 	guiInit()
 	w := &SimpleWindow{controls: map[int]windows.HWND{}, onCommand: map[int]func(){}}
 	className, _ := windows.UTF16PtrFromString("ControlCenterGUIWnd")
+	icon, _, _ := procLoadIcon.Call(guiInstance, 1)
 	wc := wndClassEx{
 		Size:      uint32(unsafe.Sizeof(wndClassEx{})),
 		WndProc:   windows.NewCallback(w.wndProc),
 		Instance:  windows.Handle(guiInstance),
 		ClassName: className,
+		Icon:      windows.Handle(icon),
+		IconSm:    windows.Handle(icon),
 	}
 	procRegisterClass.Call(uintptr(unsafe.Pointer(&wc)))
 	titlePtr, _ := windows.UTF16PtrFromString(title)
@@ -244,21 +247,21 @@ func RelaunchElevated(args string) bool {
 	modshell := windows.NewLazySystemDLL("shell32.dll")
 	p := modshell.NewProc("ShellExecuteExW")
 	type info struct {
-		Size       uint32
-		Mask       uint32
-		Hwnd       uintptr
-		Verb       *uint16
-		File       *uint16
-		Params     *uint16
-		Dir        *uint16
-		Show       int32
-		InstApp    uintptr
-		IDList     uintptr
-		Class      *uint16
-		HKeyClass  uintptr
-		HotKey     uint32
-		Icon       uintptr
-		Monitor    uintptr
+		Size      uint32
+		Mask      uint32
+		Hwnd      uintptr
+		Verb      *uint16
+		File      *uint16
+		Params    *uint16
+		Dir       *uint16
+		Show      int32
+		InstApp   uintptr
+		IDList    uintptr
+		Class     *uint16
+		HKeyClass uintptr
+		HotKey    uint32
+		Icon      uintptr
+		Monitor   uintptr
 	}
 	// SEE_MASK_NOCLOSEPROCESS = 0x40
 	sei := info{Size: uint32(unsafe.Sizeof(info{})), Mask: 0x40,

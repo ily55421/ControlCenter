@@ -19,31 +19,31 @@ import (
 
 // SupportBits 能力位(从 WMI16/96/122 与 BIOS 特性表解析)。
 type SupportBits struct {
-	PowerMode        bool
-	Quiet            bool
-	PowerSaving      bool
-	Performance      bool
-	Entertainment    bool
-	QuietPlusOnly    bool // ByClevoDefaultNotSupportPowerSavingMode
-	PowerModeUIID    int
-	DTT              bool
-	AMDRyzen         bool
-	CPUOC            bool
-	TurboFan         bool
-	SlowFan          bool
-	MSHybridSwitch   bool
-	SimpleGPUOC      bool
-	NVIDIAPowerOff   bool
-	FeatureListVer   int
-	FanLess          bool
-	AntiDust         bool
-	NoFanOffset      bool
-	RPMFanControl    bool
-	HW_PState        bool
-	SetPowerPlan     bool
-	ASPMControl      bool
-	DisablePCIEASPM  bool
-	LowRefresh       bool
+	PowerMode       bool
+	Quiet           bool
+	PowerSaving     bool
+	Performance     bool
+	Entertainment   bool
+	QuietPlusOnly   bool // ByClevoDefaultNotSupportPowerSavingMode
+	PowerModeUIID   int
+	DTT             bool
+	AMDRyzen        bool
+	CPUOC           bool
+	TurboFan        bool
+	SlowFan         bool
+	MSHybridSwitch  bool
+	SimpleGPUOC     bool
+	NVIDIAPowerOff  bool
+	FeatureListVer  int
+	FanLess         bool
+	AntiDust        bool
+	NoFanOffset     bool
+	RPMFanControl   bool
+	HW_PState       bool
+	SetPowerPlan    bool
+	ASPMControl     bool
+	DisablePCIEASPM bool
+	LowRefresh      bool
 }
 
 // Detect 能力探测(GetWMI 122/16/96 + BIOS 特性表镜像 page7)。
@@ -130,11 +130,11 @@ type aspmTable struct{ ac, dc [4]int } // [quiet ps perf ent]
 
 // Engine 电源模式引擎。
 type Engine struct {
-	w   *wmi.Client
-	as  *appsettings.Store
-	fan *fan.Controller
+	w        *wmi.Client
+	as       *appsettings.Store
+	fan      *fan.Controller
 	gpuStore *gpu.Store
-	Sup  SupportBits
+	Sup      SupportBits
 
 	mu        sync.Mutex
 	ongoing   bool
@@ -341,7 +341,7 @@ func (e *Engine) Change(m appsettings.ModeType) error {
 
 	// 6. 风扇联动
 	if e.fan != nil {
-		e.fan.LoadModeForPowerMode(int(m))
+		fail("风扇联动", e.fan.LoadModeForPowerMode(int(m)))
 	}
 
 	// 7. NV 断电(quiet_plus / pwrsaving 且支持)

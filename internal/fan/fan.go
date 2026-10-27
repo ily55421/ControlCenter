@@ -143,9 +143,10 @@ func (c *Controller) SetMode(m FanMode) error {
 	if err := c.w.SetFanMode(int(m)); err != nil {
 		return err
 	}
-	_ = c.as.WriteU8(appsettings.AddrFanMode, byte(m))
-	c.WriteSituationalData()
-	return nil
+	if err := c.as.WriteU8(appsettings.AddrFanMode, byte(m)); err != nil {
+		return err
+	}
+	return c.WriteSituationalData()
 }
 
 // SetOffsetPercent SetFanOffset:WMI(121,14,255*off/100) + 持久 (4,7)。
@@ -153,9 +154,10 @@ func (c *Controller) SetOffsetPercent(off int) error {
 	if err := c.w.SetFanOffsetPct(off); err != nil {
 		return err
 	}
-	_ = c.as.WriteU8(appsettings.AddrFanOffset, byte(off))
-	c.WriteSituationalData()
-	return nil
+	if err := c.as.WriteU8(appsettings.AddrFanOffset, byte(off)); err != nil {
+		return err
+	}
+	return c.WriteSituationalData()
 }
 
 // SetNoiseless Set_SlowFanMode:on → WMI(121,1,8)+(4,9,1)+(4,5,0);off → WMI(121,1,0)+(4,9,0)。
@@ -164,16 +166,21 @@ func (c *Controller) SetNoiseless(on bool) error {
 		if err := c.w.SetFanMode(int(Noiseless)); err != nil {
 			return err
 		}
-		_ = c.as.WriteU8(appsettings.AddrNoiselessFan, 1)
-		_ = c.as.WriteU8(appsettings.AddrFanMode, 0)
+		if err := c.as.WriteU8(appsettings.AddrNoiselessFan, 1); err != nil {
+			return err
+		}
+		if err := c.as.WriteU8(appsettings.AddrFanMode, 0); err != nil {
+			return err
+		}
 	} else {
 		if err := c.w.SetFanMode(int(Auto)); err != nil {
 			return err
 		}
-		_ = c.as.WriteU8(appsettings.AddrNoiselessFan, 0)
+		if err := c.as.WriteU8(appsettings.AddrNoiselessFan, 0); err != nil {
+			return err
+		}
 	}
-	c.WriteSituationalData()
-	return nil
+	return c.WriteSituationalData()
 }
 
 // SetTurbo Set_TruboFan 完整序列。
@@ -182,13 +189,21 @@ func (c *Controller) SetTurbo(on bool) error {
 	if on {
 		v = 1
 	}
-	_ = c.as.WriteU8(appsettings.AddrTurboFan, v)
-	_ = c.as.WriteU8(appsettings.AddrDTT, 0)
+	if err := c.as.WriteU8(appsettings.AddrTurboFan, v); err != nil {
+		return err
+	}
+	if err := c.as.WriteU8(appsettings.AddrDTT, 0); err != nil {
+		return err
+	}
 	if err := c.w.SetPerformanceData(on, false); err != nil {
 		return err
 	}
-	_ = c.as.WriteU8(appsettings.AddrFanMode, 0)
-	_ = c.as.Write(appsettings.AddrFanQuietMode+2, 1, []byte{0}) // Performance 模式 FanMode 槽(1096)
+	if err := c.as.WriteU8(appsettings.AddrFanMode, 0); err != nil {
+		return err
+	}
+	if err := c.as.Write(appsettings.AddrFanQuietMode+2, 1, []byte{0}); err != nil { // Performance 模式 FanMode 槽(1096)
+		return err
+	}
 	if on {
 		return c.w.SetFanMode(int(Auto))
 	}
@@ -196,7 +211,7 @@ func (c *Controller) SetTurbo(on bool) error {
 }
 
 // WriteSituationalData Write_SituationalMode_of_FanData:按当前电源模式回写 1094..1101。
-func (c *Controller) WriteSituationalData() {
+func (c *Controller) WriteSituationalData() error {
 	fm := c.as.ReadU8(appsettings.AddrFanMode)
 	if fm == 1 { // Max 模式改写为 Auto(与原版一致)
 		fm = 0
@@ -214,14 +229,16 @@ func (c *Controller) WriteSituationalData() {
 	case 3:
 		base = appsettings.AddrFanQuietMode + 3
 	default:
-		return
+		return nil
 	}
-	_ = c.as.WriteU8(base, byte(fm))
-	_ = c.as.WriteU8(base+4, byte(off))
+	if err := c.as.WriteU8(base, byte(fm)); err != nil {
+		return err
+	}
+	return c.as.WriteU8(base+4, byte(off))
 }
 
 // LoadModeForPowerMode FnKey Load_FanMode_forFn_3:模式切换时恢复对应模式风扇数据。
-func (c *Controller) LoadModeForPowerMode(mode int) {
+func (c *Controller) LoadModeForPowerMode(mode int) error {
 	keep := c.as.ReadU8(appsettings.AddrFeatureList+20)>>4&1 != 0 ||
 		c.as.ReadU8(appsettings.AddrFeatureList+20)&0x10 != 0 // RPM/IFSC 简化判定
 	if keep {
@@ -236,19 +253,23 @@ func (c *Controller) LoadModeForPowerMode(mode int) {
 		case 3:
 			base = appsettings.AddrFanQuietMode + 3
 		default:
-			return
+			return nil
 		}
 		fm := c.as.ReadU8(base)
 		off := c.as.ReadU8(base + 4)
-		_ = c.as.WriteU8(appsettings.AddrFanMode, byte(fm))
-		_ = c.as.WriteU8(appsettings.AddrFanOffset, byte(off))
-		_ = c.w.SetFanOffsetPct(off)
-		if mode == 3 && c.as.ReadU8(appsettings.AddrNoiselessFan) == 1 {
-			_ = c.w.SetFanMode(int(Noiseless))
-		} else {
-			_ = c.w.SetFanMode(int(fm))
+		if err := c.as.WriteU8(appsettings.AddrFanMode, byte(fm)); err != nil {
+			return err
 		}
-		return
+		if err := c.as.WriteU8(appsettings.AddrFanOffset, byte(off)); err != nil {
+			return err
+		}
+		if err := c.w.SetFanOffsetPct(off); err != nil {
+			return err
+		}
+		if mode == 3 && c.as.ReadU8(appsettings.AddrNoiselessFan) == 1 {
+			return c.w.SetFanMode(int(Noiseless))
+		}
+		return c.w.SetFanMode(int(fm))
 	}
 	// 旧方案:0/1/2 → Auto;3 → MaxQ(支持时)
 	fm := 0
@@ -258,12 +279,13 @@ func (c *Controller) LoadModeForPowerMode(mode int) {
 			fm = 0
 		}
 	}
-	_ = c.as.WriteU8(appsettings.AddrFanMode, byte(fm))
-	if mode == 3 && c.as.ReadU8(appsettings.AddrNoiselessFan) == 1 {
-		_ = c.w.SetFanMode(int(Noiseless))
-	} else {
-		_ = c.w.SetFanMode(fm)
+	if err := c.as.WriteU8(appsettings.AddrFanMode, byte(fm)); err != nil {
+		return err
 	}
+	if mode == 3 && c.as.ReadU8(appsettings.AddrNoiselessFan) == 1 {
+		return c.w.SetFanMode(int(Noiseless))
+	}
+	return c.w.SetFanMode(fm)
 }
 
 // WriteCustomTable Write_WMI14:三点曲线下发(SetWMIPackage(14,256B))。

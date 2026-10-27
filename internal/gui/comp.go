@@ -30,7 +30,7 @@ func iconChip(gtx C, name string, col color.NRGBA) D {
 	r := image.Rect(0, 0, s, s)
 	rad := Snap(gtx, rSmall)
 	fillRR(gtx, r, rad, alpha(col, 0x29))
-	strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x44), alpha(col, 0x29))
+	strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x44))
 	topHi(gtx, r.Inset(Snap(gtx, 1)), rad, colTopHi)
 	off := op.Offset(image.Pt(Snap(gtx, 5), Snap(gtx, 5))).Push(gtx.Ops)
 	drawIconOn(gtx, name, 18, col, alpha(col, 0x29))
@@ -40,29 +40,19 @@ func iconChip(gtx C, name string, col color.NRGBA) D {
 
 // ---------- 开关 ----------
 
-// toggle 42×24 圆滑轨开关:阴影滑块 + 220ms 缓动,静止时不请求重绘。
+// toggle 只保存动画,输入控件由页面持有。
 type toggle struct {
-	clk    widget.Bool
-	anim   float32   // 0 = 关,1 = 开(显示值)
-	last   time.Time // 上一帧时间(按真实经过时间推进动画)
+	anim   float32
+	last   time.Time
 	inited bool
 }
 
-// Update 处理事件并返回是否发生变化(与 widget.Bool.Update 语义一致)。
-func (t *toggle) Update(gtx C) bool { return t.clk.Update(gtx) }
-
-// Value 当前值。
-func (t *toggle) Value() bool { return t.clk.Value }
-
-// Set 直接设置值(快照同步用)。
-func (t *toggle) Set(v bool) { t.clk.Value = v }
-
-// toggleDur 开关滑动时长。
 const toggleDur = 220 * time.Millisecond
 
-func (t *toggle) layout(gtx C) D {
+func (t *toggle) layout(gtx C, b *widget.Bool) D {
+	b.Update(gtx)
 	target := float32(0)
-	if t.clk.Value {
+	if b.Value {
 		target = 1
 	}
 	if !t.inited {
@@ -83,15 +73,15 @@ func (t *toggle) layout(gtx C) D {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 	}
 	t.last = gtx.Now
-	return t.clk.Layout(gtx, func(gtx C) D {
+	return b.Layout(gtx, func(gtx C) D {
 		w, h := Snap(gtx, switchW), Snap(gtx, switchH)
 		r := image.Rect(0, 0, w, h)
 		rad := h / 2
 		// 轨道:关 → 内嵌灰;开 → 青色
 		track := mixNRGBA(colSunken, colAccent, t.anim)
 		fillRR(gtx, r, rad, track)
-		strokeRR(gtx, r, rad, Snap(gtx, 1), mixNRGBA(colLine, colAccent, t.anim), track)
-		if t.clk.Hovered() {
+		strokeRR(gtx, r, rad, Snap(gtx, 1), mixNRGBA(colLine, colAccent, t.anim))
+		if b.Hovered() {
 			fillRR(gtx, r, rad, alpha(colText, 0x08))
 		}
 		// 滑块:白色圆 + 下方 1px 阴影
@@ -132,7 +122,10 @@ const (
 // button 自绘按钮:内容(标签+内边距)撑出尺寸,底作为 Stack 的 Expanded 层铺满,
 // 文字由 Stack 的居中对齐摆放 —— 不再"录制一遍、偏移回放一遍"。
 func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool) D {
-	return clk.Layout(gtx, func(gtx C) D {
+	if disabled {
+		gtx = gtx.Disabled()
+	}
+	body := func(gtx C) D {
 		fg := colText
 		bg := alpha(colText, 0x0A)
 		bd := colLine
@@ -170,7 +163,7 @@ func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool)
 					fillRR(gtx, r, rad, bg)
 				}
 				if bd.A != 0 {
-					strokeRR(gtx, r, rad, Snap(gtx, 1), bd, bg)
+					strokeRR(gtx, r, rad, Snap(gtx, 1), bd)
 				}
 				if pressed {
 					fillRR(gtx, r, rad, alpha(colBg, 0x22))
@@ -179,10 +172,14 @@ func button(gtx C, clk *widget.Clickable, s string, kind btnKind, disabled bool)
 			}),
 			layout.Stacked(func(gtx C) D {
 				return layout.Inset{Left: 14, Right: 14, Top: 4, Bottom: 4}.Layout(gtx,
-					func(gtx C) D { return txt(gtx, s, textStyle{Size: fsBody2, Col: fg}) })
+					func(gtx C) D { return txt(gtx, s, textStyle{Size: fsBody2, Col: fg, Lines: 1}) })
 			}),
 		)
-	})
+	}
+	if disabled {
+		return body(gtx)
+	}
+	return clk.Layout(gtx, body)
 }
 
 // ---------- 胶囊药丸 / 徽章 ----------
@@ -195,7 +192,7 @@ func pillBadge(gtx C, s string, col color.NRGBA) D {
 			r := image.Rect(0, 0, sz.X, sz.Y)
 			rad := sz.Y / 2
 			fillRR(gtx, r, rad, alpha(col, 0x1C))
-			strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x38), alpha(col, 0x1C))
+			strokeRR(gtx, r, rad, Snap(gtx, 1), alpha(col, 0x38))
 			return D{Size: sz}
 		}),
 		layout.Stacked(func(gtx C) D {
@@ -227,7 +224,8 @@ func (s *segmented) Layout(gtx C, labels []string) (D, int) {
 	rad := Snap(gtx, rCtl)
 	r := image.Rect(0, 0, total, h)
 	fillRR(gtx, r, rad, colSunken)
-	strokeRR(gtx, r, rad, Snap(gtx, 1), colLine, colSunken)
+	strokeRR(gtx, r, rad, Snap(gtx, 1), colLine)
+	gtx.Constraints = layout.Exact(image.Pt(total, h))
 
 	var kids []layout.FlexChild
 	for i := range labels {
@@ -237,23 +235,23 @@ func (s *segmented) Layout(gtx C, labels []string) (D, int) {
 				s.sel = i
 				clicked = i
 			}
+			sz := image.Pt(gtx.Constraints.Min.X, h)
+			gtx.Constraints = layout.Exact(sz)
 			return s.clks[i].Layout(gtx, func(gtx C) D {
-				st := textStyle{Size: fsBody2, Col: colText3}
+				gtx.Constraints = layout.Exact(sz)
+				st := textStyle{Size: fsBody2, Col: colText3, Lines: 1}
 				if i == s.sel {
-					st = textStyle{Size: fsBody2, Col: colAccent, W: font.Medium}
+					st.Col, st.W = colAccent, font.Medium
 				} else if s.clks[i].Hovered() {
 					st.Col = colText
 				}
-				// 本段实际分到的宽度由 Flex 给(用 Min.X),不再用外层算出的 segW:
-				// 两者不一致时,选中底会宽过文字所在的那一段(实测"自动"段高亮超宽)。
 				return layout.Stack{Alignment: layout.Center}.Layout(gtx,
 					layout.Expanded(func(gtx C) D {
-						sz := image.Pt(gtx.Constraints.Min.X, h)
 						if i == s.sel {
 							rr := image.Rect(0, 0, sz.X, sz.Y).Inset(Snap(gtx, 2))
 							fillRR(gtx, rr, rad-Snap(gtx, 2), alpha(colAccent, 0x1C))
 							strokeRR(gtx, rr, rad-Snap(gtx, 2), Snap(gtx, 1),
-								alpha(colAccent, 0x77), alpha(colAccent, 0x1C))
+								alpha(colAccent, 0x77))
 						}
 						return D{Size: sz}
 					}),
@@ -339,7 +337,7 @@ func pageHead(gtx C, title, sub string, right layout.Widget) D {
 					}),
 				)
 			}),
-			layout.Flexed(1, func(gtx C) D { return D{} }), // 弹性占位:把右侧内容推到右端
+			layout.Flexed(1, func(gtx C) D { return D{Size: gtx.Constraints.Min} }), // 弹性占位:把右侧内容推到右端
 			layout.Rigid(func(gtx C) D {
 				if right == nil {
 					return D{}

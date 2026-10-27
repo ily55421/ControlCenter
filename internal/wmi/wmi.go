@@ -294,11 +294,12 @@ func (c *Client) QueryGPUSwitch() (cur, support byte) {
 }
 
 // SetGPUSwitch WMI4 sub22。
-func (c *Client) SetGPUSwitch(mode int) {
+func (c *Client) SetGPUSwitch(mode int) error {
 	in := make([]byte, 256)
 	in[0] = 22
 	in[1] = byte(mode)
-	c.SetWMIPackageEx(4, in)
+	_, err := c.b.SetDataEx(4, in)
+	return err
 }
 
 // QueryKeyboard WMI4 sub24:[0]=FnLock(0 隐藏 1 on 2 off),[1]=WinKey(1 可用 2 禁用),[2]=FnWin。
@@ -310,23 +311,25 @@ func (c *Client) QueryKeyboard() (fnLock, winKey, fnWin byte) {
 }
 
 // SetKeyboardSetting WMI4 sub25:{25,fn,win,winFn}(1=on,2=off;win 1=启用 2=禁用)。
-func (c *Client) SetKeyboardSetting(fnLock, winKey, fnWin byte) {
+func (c *Client) SetKeyboardSetting(fnLock, winKey, fnWin byte) error {
 	in := make([]byte, 256)
 	in[0] = 25
 	in[1] = fnLock
 	in[2] = winKey
 	in[3] = fnWin
-	c.SetWMIPackageEx(4, in)
+	_, err := c.b.SetDataEx(4, in)
+	return err
 }
 
 // SetPgUpDn WMI4 sub26(新 BIOS):0=启用 1=禁用。
-func (c *Client) SetPgUpDn(disabled bool) {
+func (c *Client) SetPgUpDn(disabled bool) error {
 	in := make([]byte, 256)
 	in[0] = 26
 	if disabled {
 		in[1] = 1
 	}
-	c.SetWMIPackageEx(4, in)
+	_, err := c.b.SetDataEx(4, in)
+	return err
 }
 
 // QueryFlexiCharger WMI4 sub30:[0]=使能 [1]=起始% [2]=停止% [16..31]/[32..47]=可选档位表。
@@ -338,7 +341,7 @@ func (c *Client) QueryFlexiCharger() (enabled bool, start, stop byte, startTable
 }
 
 // SetFlexiCharger WMI4 sub31:{31,enable,start,stop}。
-func (c *Client) SetFlexiCharger(enabled bool, start, stop byte) {
+func (c *Client) SetFlexiCharger(enabled bool, start, stop byte) error {
 	in := make([]byte, 256)
 	in[0] = 31
 	if enabled {
@@ -346,7 +349,8 @@ func (c *Client) SetFlexiCharger(enabled bool, start, stop byte) {
 	}
 	in[2] = start
 	in[3] = stop
-	c.SetWMIPackageEx(4, in)
+	_, err := c.b.SetDataEx(4, in)
+	return err
 }
 
 // QueryAMDMode WMI4 sub7 读:{7,0} → out[2]=mode out[3]=频率索引 out[4]=电压索引。

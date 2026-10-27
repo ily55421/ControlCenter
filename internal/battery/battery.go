@@ -12,28 +12,28 @@ import (
 // Data WMI7 电池数据包。
 type Data struct {
 	Version            int
-	ManufacturerDate   int  // (年-1980)*512 + 月*32 + 日
+	ManufacturerDate   int // (年-1980)*512 + 月*32 + 日
 	CycleCount         int
-	FullChargeCapacity int  // mAh
-	DesignCapacity     int  // mAh
-	BatteryStatus      int  // bit0x10 完全放电 bit0x20 完全充满
+	FullChargeCapacity int // mAh
+	DesignCapacity     int // mAh
+	BatteryStatus      int // bit0x10 完全放电 bit0x20 完全充满
 	PFStatus           int
-	OperationStatus    int  // bit12 永久失效
-	StopChargeThresh   int  // %
+	OperationStatus    int // bit12 永久失效
+	StopChargeThresh   int // %
 
-	RCapacity int // 更换-容量阈值%
-	RCycle    int // 更换-循环阈值
-	RDate     int // 更换-年限阈值
+	RCapacity  int // 更换-容量阈值%
+	RCycle     int // 更换-循环阈值
+	RDate      int // 更换-年限阈值
 	R1Capacity int
-	R1Cycle   int
-	WCapacity int // 警告-容量阈值%
-	WCycle    int
+	R1Cycle    int
+	WCapacity  int // 警告-容量阈值%
+	WCycle     int
 	WDate      int
 	W1Capacity int
 	W1Cycle    int
 
-	ReplaceCondition  string
-	WarningCondition  string
+	ReplaceCondition string
+	WarningCondition string
 }
 
 // Parse 解析 WMI7 包。
@@ -202,10 +202,14 @@ func splitTop(expr string) []string {
 // --- 校准控制 ---
 
 // RefreshCommand 电池校准命令三元组(ACOFF/Refresh/Flexi)。
-func RefreshCommand(w *wmi.Client, acoff, refresh, flexi int) {
-	_ = w.SetACOFF(acoff)
-	_ = w.SetBatteryRefresh(refresh)
-	_ = w.SetBatteryFlexi(flexi)
+func RefreshCommand(w *wmi.Client, acoff, refresh, flexi int) error {
+	if err := w.SetACOFF(acoff); err != nil {
+		return err
+	}
+	if err := w.SetBatteryRefresh(refresh); err != nil {
+		return err
+	}
+	return w.SetBatteryFlexi(flexi)
 }
 
 // 校准阶段(OngoingStatus)。

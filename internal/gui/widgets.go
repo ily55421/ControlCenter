@@ -11,29 +11,30 @@ type widgets struct {
 	winMin, winMax, winClose widget.Clickable
 
 	// 系统监控
-	modeTab    [5]widget.Clickable
-	fanSeg     segmented // 风扇模式分段控件(单行等分,取代零散标签)
-	noiseless  widget.Bool
-	tileWin    widget.Clickable // 偏好磁贴
-	tileFnWin  widget.Clickable
-	tileFnLock widget.Clickable
-	tileTurbo  widget.Clickable
-	tileDTT    widget.Clickable
-	tileLow    widget.Clickable
-	fanOffset  *neonSlider
-	blSlider   *neonSlider
-	dustRun    widget.Clickable
-	dustApply  widget.Clickable
-	dustDays   numField
-	dustHour   numField
-	dustResume widget.Bool
-	fanSave    widget.Clickable
-	fanReset   widget.Clickable
-	curveEd    [3][6]numField // 3 风扇 × (T1..T3, D1..D3)
-	curveTag   [3]struct{}    // 每风扇曲线编辑器的指针输入 tag
-	gpuSwitch  widget.Clickable
+	systemSource *sysSnap
+	modeTab      [5]widget.Clickable
+	fanSeg       segmented // 风扇模式分段控件(单行等分,取代零散标签)
+	noiseless    widget.Bool
+	tileWin      widget.Clickable // 偏好磁贴
+	tileFnWin    widget.Clickable
+	tileFnLock   widget.Clickable
+	tileTurbo    widget.Clickable
+	tileDTT      widget.Clickable
+	tileLow      widget.Clickable
+	fanOffset    *neonSlider
+	blSlider     *neonSlider
+	dustRun      widget.Clickable
+	dustApply    widget.Clickable
+	dustDays     numField
+	dustHour     numField
+	dustResume   widget.Bool
+	fanSave      widget.Clickable
+	fanReset     widget.Clickable
+	curveEd      [3][6]numField // 3 风扇 × (T1..T3, D1..D3)
+	gpuSwitch    widget.Clickable
 
 	// LED 设备
+	kbSource   *KBStateOut
 	kbOn       widget.Bool
 	kbOvr      widget.Bool
 	kbSleepOff widget.Clickable
@@ -57,10 +58,12 @@ type widgets struct {
 	fkDisable  widget.Clickable
 
 	// FlexiCharger
-	fcMode  [3]widget.Clickable
-	fcStart *neonSlider
-	fcStop  *neonSlider
-	fcApply widget.Clickable
+	chargerSource  *chargerSnap
+	fcSelectedMode int
+	fcMode         [3]widget.Clickable
+	fcStart        *neonSlider
+	fcStop         *neonSlider
+	fcApply        widget.Clickable
 
 	// CPU 超频
 	cpuPL1, cpuPL2, cpuPLT, cpuVR, cpuVO, cpuOV numField
@@ -90,6 +93,7 @@ type widgets struct {
 	enDisable    widget.Clickable
 
 	// 偏好
+	prefSource               *Pref
 	pfFnLock, pfWin, pfFnWin widget.Bool
 	pfKbApply                widget.Clickable
 	pfBL                     *neonSlider
@@ -118,19 +122,18 @@ var langNames = []string{
 
 func (g *GUI) initWidgets() {
 	w := &g.w
+	g.curveDragFan, g.curveDragPt = -1, -1
 	w.kbGrid.SelR, w.kbGrid.SelC = -1, -1
 	w.kbGrid.Tag = &w.kbGrid                 // event.Tag 必须非 nil
 	w.kbGrid.ScrollTag = &w.kbGrid.ScrollTag // 滚轮与点击必须是两个 tag,否则滚轮会被当成按下
 	w.fanOffset = newSlider(0, 100, false, func(v int) {
-		g.run("偏移已下发", -1, 0, func() error { g.be.SetFanOffset(v); return nil })
+		g.run("偏移已下发", -1, 0, func() error { return g.be.SetFanOffset(v) })
 	})
 	w.blSlider = newSlider(0, 10, true, func(v int) {
-		g.run("蓝光过滤 "+itoa(v)+" 档", -1, 0, func() error { g.be.SetBlueLight(float64(v)); return nil })
+		g.run("蓝光过滤 "+itoa(v)+" 档", -1, 0, func() error { return g.be.SetBlueLight(float64(v)) })
 	})
-	// pfBL 偏好页蓝光滑杆(此前漏初始化,进入偏好页即 nil panic)
-	w.pfBL = newSlider(0, 10, true, func(v int) {
-		g.run("显示设置已应用", -1, 0, func() error { g.be.SetBlueLight(float64(v)); return nil })
-	})
+	// 偏好页只编辑草稿,由显示设置的应用按钮统一下发。
+	w.pfBL = newSlider(0, 10, true, nil)
 	w.kbPart = newDropdown(kbPartNames, 0, 160)
 	w.kbEff = newDropdown(kbEffNames, 0, 160)
 	w.kbBr = newSlider(0, 4, true, func(v int) {

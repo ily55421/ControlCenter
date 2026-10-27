@@ -115,7 +115,7 @@ func decodeICODIB(b []byte) image.Image {
 	return img
 }
 
-// appIconImage 解析嵌入的 app.ico,失败返回 nil(调用方退回矢量图标)。
+// appIconImage 解析嵌入图标,失败时使用矢量图标。
 func appIconImage() image.Image {
 	icoOnce.Do(func() {
 		img := decodeICO(appIconICO)
@@ -139,12 +139,13 @@ func drawAppIcon(gtx C, x, y, size int) {
 		fillCircle(gtx, cx, cy, r*0.22, pal.Lime)
 		return
 	}
-	off := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
-	cl := clip.Rect(image.Rect(0, 0, size, size)).Push(gtx.Ops)
+	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+	defer clip.Rect(image.Rect(0, 0, size, size)).Push(gtx.Ops).Pop()
+	bounds := icoImg.Bounds()
+	sx, sy := float32(size)/float32(bounds.Dx()), float32(size)/float32(bounds.Dy())
+	defer op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(sx, sy))).Push(gtx.Ops).Pop()
 	icoOp.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
-	cl.Pop()
-	off.Pop()
 }
 
 // appIconWidget 应用图标的容器形态:尺寸按 Dp 取,位置交给外层 Flex/Stack,

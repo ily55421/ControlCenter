@@ -2,8 +2,10 @@ package gui
 
 import (
 	"image"
+	"os"
 	"testing"
 
+	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
@@ -60,6 +62,105 @@ func TestSwitchTogglesValue(t *testing.T) {
 		t.Fatalf("点击开关后 Value 未变化(仍为 %v)", b.Value)
 	}
 	t.Logf("开关状态:%v → %v", before, b.Value)
+}
+
+func TestSwitchDispatchesChangesBeforeLayout(t *testing.T) {
+	regressionTheme(t)
+	previous := switchAnims
+	switchAnims = make(map[*widget.Bool]*toggle)
+	t.Cleanup(func() { switchAnims = previous })
+	for _, source := range []struct {
+		name string
+		kind pointer.Source
+	}{{"mouse", pointer.Mouse}, {"touch", pointer.Touch}} {
+		t.Run(source.name, func(t *testing.T) {
+			var b widget.Bool
+			var ops op.Ops
+			var router input.Router
+			var dispatched []bool
+			render := func() {
+				ops.Reset()
+				gtx := regressionContext(&ops, &router, layout.Exact(image.Pt(120, 60)))
+				if b.Update(gtx) {
+					dispatched = append(dispatched, b.Value)
+				}
+				switchBox(gtx, &b)
+				router.Frame(&ops)
+			}
+			queue := func(kind pointer.Kind) {
+				buttons := pointer.Buttons(0)
+				if kind == pointer.Press {
+					buttons = pointer.ButtonPrimary
+				}
+				router.Queue(pointer.Event{
+					Kind: kind, Source: source.kind, Position: f32.Pt(20, 12), Buttons: buttons,
+				})
+			}
+			render()
+			if len(dispatched) != 0 {
+				t.Fatal("initial layout dispatched a command")
+			}
+			for i, want := range []bool{true, false} {
+				queue(pointer.Press)
+				render()
+				if len(dispatched) != i {
+					t.Fatal("press dispatched before release")
+				}
+				queue(pointer.Release)
+				render()
+				for range 3 {
+					render()
+				}
+				if b.Value != want || len(dispatched) != i+1 || dispatched[i] != want {
+					t.Fatalf("value=%v dispatched=%v, want one command with value %v", b.Value, dispatched, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSwitchNativeDispatch(t *testing.T) {
+	if os.Getenv("CC_SWITCH_NATIVE") != "1" {
+		t.Skip("CC_SWITCH_NATIVE=1")
+	}
+	regressionTheme(t)
+	win := new(app.Window)
+	win.Option(app.Title("Control Center Switch Probe"), app.Size(unit.Dp(600), unit.Dp(240)))
+	g.win = win
+	var b widget.Bool
+	var ops op.Ops
+	calls := 0
+	for {
+		switch e := win.Event().(type) {
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
+			if b.Update(gtx) {
+				calls++
+				t.Logf("noiseless dispatch %d: %v (recording only, no hardware)", calls, b.Value)
+			}
+			fillRect(gtx, colBg)
+			layout.Inset{Top: 20, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
+				return col(gtx,
+					func(gtx C) D {
+						return txt(gtx, "Noiseless dispatch probe - no hardware writes", textStyle{Size: fsBody2, Col: colText})
+					},
+					vSpacer(20),
+					func(gtx C) D { return switchBox(gtx, &b) },
+					vSpacer(20),
+					func(gtx C) D { return txt(gtx, "Dispatch count: "+itoa(calls), textStyle{Size: fsBig, Col: colAccent}) },
+				)
+			})
+			e.Frame(gtx.Ops)
+		case app.DestroyEvent:
+			if e.Err != nil {
+				t.Fatal(e.Err)
+			}
+			if calls != 2 || b.Value {
+				t.Fatalf("calls=%d value=%v, want two dispatches ending off", calls, b.Value)
+			}
+			return
+		}
+	}
 }
 
 // TestSegmentedPicks 分段控件点击回传下标,且选中态随之更新。

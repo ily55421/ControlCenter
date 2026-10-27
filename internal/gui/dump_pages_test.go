@@ -25,7 +25,7 @@ func TestDumpPageScreens(t *testing.T) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatalf("建目录失败: %v", err)
 	}
-	size := image.Pt(defWinW, windowHeightFor(pageBudget))
+	size := image.Pt(defWinW, defWinH)
 	pages := []struct {
 		name string
 		id   int
@@ -45,7 +45,7 @@ func TestDumpPageScreens(t *testing.T) {
 			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 			Constraints: layout.Exact(size),
 		}
-		// 多跑两帧:第一帧让 spreadCol/grid2Fill 拿到自然高度,后续帧才是最终分布。
+		// 首帧内容高度决定下一帧的滚动范围。
 		g.layoutRoot(gtx)
 		ops.Reset()
 		g.layoutRoot(gtx)
